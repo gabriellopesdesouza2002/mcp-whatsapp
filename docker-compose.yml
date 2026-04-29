@@ -1,0 +1,17 @@
+services:
+  wuzapi:
+    image: asternic/wuzapi:latest
+    container_name: mcp-whatsapp-wuzapi
+    restart: unless-stopped
+    ports:
+      - "7143:8080"
+    volumes:
+      - ./wuzapi_data:/app/dbdata
+    environment:
+      - WUZAPI_ADMIN_TOKEN=${WUZAPI_ADMIN_TOKEN:-admin123}
+      - WUZAPI_HISTORY=true
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3

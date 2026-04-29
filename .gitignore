@@ -1,0 +1,29 @@
+.env
+*.log
+logs/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.claude/
+.claude-mcp/
+
+# WhatsApp Data & DBs
+wuzapi_data/
+*.db
+*.db-wal
+*.db-shm
+
+# Project Artifacts & Temp
+artifacts/
+scratch/
+PIPELINE.md
+*.json
+
+# OS specific
+.DS_Store
+Thumbs.db
+*.ps1

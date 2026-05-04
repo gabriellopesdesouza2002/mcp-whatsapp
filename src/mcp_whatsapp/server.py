@@ -846,39 +846,67 @@ async def whatsapp_get_user_info(phone: str) -> str:
 
 @mcp.tool()
 async def whatsapp_search_contacts(query: str) -> str:
-    """Search contacts by name or nickname (e.g. 'João', 'mãe', 'amor'). Returns matches with phone numbers."""
+    """Search contacts by name or nickname. Falls back to recent chat history when not found in phone book."""
     result = await client.get_contacts()
     contacts_raw = result.get("data", {})
 
-    if not isinstance(contacts_raw, dict):
-        return _format_result(result)
-
     q = query.lower().strip()
     matches = []
-    for jid, contact in contacts_raw.items():
-        full_name = contact.get("FullName") or ""
-        push_name = contact.get("PushName") or ""
-        first_name = contact.get("FirstName") or ""
-        business_name = contact.get("BusinessName") or ""
-        all_names = f"{full_name} {push_name} {first_name} {business_name}".lower()
-        if q in all_names:
-            # Extract phone from JID (e.g. "5511999998888@s.whatsapp.net" → "5511999998888")
-            phone = jid.split("@")[0] if "@" in jid else jid
-            matches.append({
-                "name": full_name or push_name or first_name or business_name,
-                "phone": phone,
-                "jid": jid,
-            })
 
-    if not matches:
-        return (
-            f"❌ No contacts found matching '{query}' in the phone book. "
-            "The person may be saved under a different name or may only exist as a WhatsApp push name. "
-            "Try calling whatsapp_get_chats() to browse recent conversations — it includes contact names "
-            "and you can identify the chat by name and send via the 'phone' field."
-        )
+    if isinstance(contacts_raw, dict):
+        for jid, contact in contacts_raw.items():
+            full_name = contact.get("FullName") or ""
+            push_name = contact.get("PushName") or ""
+            first_name = contact.get("FirstName") or ""
+            business_name = contact.get("BusinessName") or ""
+            all_names = f"{full_name} {push_name} {first_name} {business_name}".lower()
+            if q in all_names:
+                phone = jid.split("@")[0] if "@" in jid else jid
+                matches.append({
+                    "name": full_name or push_name or first_name or business_name,
+                    "phone": phone,
+                    "jid": jid,
+                })
 
-    return _format_result({"success": True, "count": len(matches), "data": matches})
+    if matches:
+        return _format_result({"success": True, "count": len(matches), "data": matches})
+
+    # Fallback: search recent message history — look at unique senders and their last messages
+    # so the agent can identify the person even if they're not in the phone book.
+    if not DB_PATH.exists():
+        return f"❌ '{query}' not found in contacts and message history is unavailable."
+
+    try:
+        sql = """
+            SELECT chat_jid, sender_jid, text_content, timestamp
+            FROM message_history
+            WHERE chat_jid NOT LIKE '%@g.us'
+            ORDER BY id DESC
+            LIMIT 600
+        """
+        rows = await _query_db(sql)
+        seen: dict[str, dict] = {}
+        for (chat_jid, sender_jid, text, ts) in rows:
+            if chat_jid not in seen:
+                phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
+                seen[chat_jid] = {
+                    "phone": phone,
+                    "jid": chat_jid,
+                    "last_msg": (text or "")[:80],
+                    "last_ts": (ts or "")[:10],
+                }
+        recent = list(seen.values())[:50]
+        return json.dumps({
+            "found": False,
+            "message": (
+                f"'{query}' not found in phone book contacts. "
+                f"Showing {len(recent)} recent 1-on-1 conversations — ask the user which phone number belongs to '{query}', "
+                "then use that phone to send the message."
+            ),
+            "recent_chats": recent,
+        }, ensure_ascii=False)
+    except Exception as e:
+        return f"❌ '{query}' not found in contacts. History fallback failed: {e}"
 
 
 @mcp.tool()

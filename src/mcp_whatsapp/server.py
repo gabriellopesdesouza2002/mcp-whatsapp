@@ -871,39 +871,71 @@ async def whatsapp_search_contacts(query: str) -> str:
     if matches:
         return _format_result({"success": True, "count": len(matches), "data": matches})
 
-    # Fallback: search recent message history — look at unique senders and their last messages
-    # so the agent can identify the person even if they're not in the phone book.
+    # Fallback: pull unique DM chats from history, resolve names via WuzAPI, then search
     if not DB_PATH.exists():
         return f"❌ '{query}' not found in contacts and message history is unavailable."
 
     try:
         sql = """
-            SELECT chat_jid, sender_jid, text_content, timestamp
+            SELECT chat_jid, text_content, timestamp
             FROM message_history
             WHERE chat_jid NOT LIKE '%@g.us'
             ORDER BY id DESC
-            LIMIT 600
+            LIMIT 800
         """
         rows = await _query_db(sql)
         seen: dict[str, dict] = {}
-        for (chat_jid, sender_jid, text, ts) in rows:
+        for (chat_jid, text, ts) in rows:
             if chat_jid not in seen:
                 phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
                 seen[chat_jid] = {
                     "phone": phone,
                     "jid": chat_jid,
+                    "name": "",
                     "last_msg": (text or "")[:80],
                     "last_ts": (ts or "")[:10],
                 }
-        recent = list(seen.values())[:50]
+
+        # Resolve names via WuzAPI /user/info for phone-number JIDs (not @lid)
+        name_matches = []
+        all_resolved = []
+        for entry in list(seen.values())[:60]:
+            phone = entry["phone"]
+            # Skip LID-format JIDs — they have no usable phone number
+            if not phone.isdigit():
+                all_resolved.append(entry)
+                continue
+            try:
+                info = await client.get_user_info(phone)
+                data = info.get("data", {})
+                # WuzAPI returns a dict keyed by JID
+                for _jid, udata in (data.items() if isinstance(data, dict) else []):
+                    wname = udata.get("VerifiedName") or udata.get("PushName") or udata.get("Name") or ""
+                    entry["name"] = wname
+                    break
+            except Exception:
+                pass
+            all_resolved.append(entry)
+            # Check if this entry matches the query
+            if q in entry["name"].lower() or q in phone:
+                name_matches.append(entry)
+
+        if name_matches:
+            return json.dumps({
+                "found": True,
+                "count": len(name_matches),
+                "data": name_matches,
+            }, ensure_ascii=False)
+
+        # Still not found — return resolved list so agent/user can identify
         return json.dumps({
             "found": False,
             "message": (
-                f"'{query}' not found in phone book contacts. "
-                f"Showing {len(recent)} recent 1-on-1 conversations — ask the user which phone number belongs to '{query}', "
-                "then use that phone to send the message."
+                f"'{query}' not found in contacts or resolved names. "
+                "Showing recent conversations with names (where available). "
+                "Ask the user to identify the correct number."
             ),
-            "recent_chats": recent,
+            "recent_chats": [e for e in all_resolved if e["name"] or e["last_msg"]][:30],
         }, ensure_ascii=False)
     except Exception as e:
         return f"❌ '{query}' not found in contacts. History fallback failed: {e}"

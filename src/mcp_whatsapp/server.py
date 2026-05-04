@@ -352,9 +352,20 @@ async def whatsapp_disconnect(confirmed: bool = False) -> str:
 
 @mcp.tool()
 async def whatsapp_status() -> str:
-    """Get WhatsApp session status: connected/disconnected/waiting QR. Returns JID and history sync info."""
-    result = await client.get_status()
-    return _format_result(result)
+    """Get WhatsApp session status (connected/disconnected/QR pending) and WuzAPI service health."""
+    status = await client.get_status()
+    try:
+        health = await client.health()
+        status_data = status.get("data", {})
+        health_data = health.get("data", {}) if isinstance(health.get("data"), dict) else {}
+        return json.dumps({
+            "connected": status_data.get("connected"),
+            "loggedIn": status_data.get("loggedIn"),
+            "jid": status_data.get("jid"),
+            "health": health_data,
+        }, ensure_ascii=False)
+    except Exception:
+        return _format_result(status)
 
 
 @mcp.tool()
@@ -383,12 +394,6 @@ async def whatsapp_get_datetime() -> str:
         "timezone": "America/Sao_Paulo",
     }, ensure_ascii=False)
 
-
-@mcp.tool()
-async def whatsapp_health() -> str:
-    """Check WuzAPI service health (uptime, memory, version)."""
-    result = await client.health()
-    return _format_result(result)
 
 
 @mcp.tool()
@@ -503,12 +508,6 @@ async def whatsapp_send_video(phone: str, video_url: str, caption: str = "") -> 
     return _format_result(result)
 
 
-@mcp.tool()
-async def whatsapp_send_sticker(phone: str, sticker_url: str) -> str:
-    """Send sticker via WhatsApp. phone: no '+'. sticker_url: public URL (WebP recommended)."""
-    result = await client.send_sticker(phone, sticker_url)
-    return _format_result(result)
-
 
 @mcp.tool()
 async def whatsapp_send_location(phone: str, latitude: float, longitude: float, name: str = "") -> str:
@@ -530,19 +529,6 @@ async def whatsapp_send_link(phone: str, url: str, text: str = "") -> str:
     result = await client.send_link(phone, url, text)
     return _format_result(result)
 
-
-@mcp.tool()
-async def whatsapp_send_buttons(phone: str, text: str, buttons: list[dict[str, str]], title: str = "", footer: str = "") -> str:
-    """Send interactive buttons message. phone: no '+'. buttons: [{ButtonId, ButtonText}]. title/footer: optional."""
-    result = await client.send_buttons(phone, text, buttons, title, footer)
-    return _format_result(result)
-
-
-@mcp.tool()
-async def whatsapp_send_list(phone: str, text: str, button_text: str, sections: list[dict[str, Any]], title: str = "", footer: str = "") -> str:
-    """Send interactive list message. sections: [{Title, Rows}]. button_text: list button label. title/footer: optional."""
-    result = await client.send_list(phone, text, button_text, sections, title, footer)
-    return _format_result(result)
 
 
 @mcp.tool()
@@ -857,12 +843,6 @@ async def whatsapp_get_user_info(phone: str) -> str:
     return _format_result(result)
 
 
-@mcp.tool()
-async def whatsapp_get_contacts() -> str:
-    """Get full WhatsApp contacts list."""
-    result = await client.get_contacts()
-    return _format_result(result)
-
 
 @mcp.tool()
 async def whatsapp_search_contacts(query: str) -> str:
@@ -970,12 +950,6 @@ async def whatsapp_check_phones(phones: list[str]) -> str:
     return _format_result(result)
 
 
-@mcp.tool()
-async def whatsapp_get_avatar(phone: str) -> str:
-    """Get profile picture URL for a number. phone: no '+'."""
-    result = await client.get_avatar(phone)
-    return _format_result(result)
-
 
 # ══════════════════════════════════════════════
 # GROUP TOOLS
@@ -1017,35 +991,6 @@ async def whatsapp_get_group_invite_link(group_jid: str) -> str:
     return _format_result(result)
 
 
-# ══════════════════════════════════════════════
-# WEBHOOK TOOL
-# ══════════════════════════════════════════════
-
-
-@mcp.tool()
-async def whatsapp_set_webhook(webhook_url: str) -> str:
-    """Set webhook URL to receive incoming WhatsApp events (messages, receipts)."""
-    result = await client.set_webhook(webhook_url)
-    return _format_result(result)
-
-
-# ══════════════════════════════════════════════
-# NEWSLETTER / CHANNEL TOOLS
-# ══════════════════════════════════════════════
-
-
-@mcp.tool()
-async def whatsapp_get_newsletter_messages(newsletter_jid: str, count: int = 50) -> str:
-    """Get messages from a newsletter/channel. newsletter_jid: channel ID. count: default 50."""
-    result = await client.get_newsletter_messages(newsletter_jid, count)
-    return _format_result(result)
-
-
-@mcp.tool()
-async def whatsapp_subscribe_newsletter(newsletter_jid: str) -> str:
-    """Subscribe to a WhatsApp newsletter/channel. newsletter_jid: channel ID."""
-    result = await client.subscribe_newsletter(newsletter_jid)
-    return _format_result(result)
 
 
 # ══════════════════════════════════════════════
@@ -1054,52 +999,47 @@ async def whatsapp_subscribe_newsletter(newsletter_jid: str) -> str:
 
 
 @mcp.tool()
-async def whatsapp_admin_list_users() -> str:
-    """List all WuzAPI users. Requires admin token."""
-    result = await client.admin_list_users()
-    return _format_result(result)
-
-
-@mcp.tool()
-async def whatsapp_admin_create_user(name: str, token: str) -> str:
-    """Create WuzAPI user. Requires admin token. name: username. token: auth token."""
-    result = await client.admin_create_user(name, token)
-    return _format_result(result)
-
-
-@mcp.tool()
-async def whatsapp_admin_delete_user(name: str, confirmed: bool = False) -> str:
-    """Delete WuzAPI user. ⚠️ DESTRUCTIVE. confirmed=True required — always ask user first."""
-    if not confirmed:
-        return (
-            f"⚠️ Você tem certeza que quer DELETAR o usuário '{name}'?\n"
-            "Isso removerá a sessão e todos os dados do usuário no WuzAPI. "
-            "Para confirmar, chame novamente com confirmed=True."
-        )
-    result = await client.admin_delete_user(name)
-    return _format_result(result)
-
-
-@mcp.tool()
-async def whatsapp_admin_enable_history() -> str:
-    """Enable message history for current user. Run if whatsapp_get_messages returns history disabled."""
+async def whatsapp_admin(action: str, name: str = "", token: str = "", confirmed: bool = False) -> str:
+    """WuzAPI admin operations. action: 'list_users'|'create_user'|'delete_user'|'enable_history'. Requires admin token."""
     if not client.admin_token:
         return "❌ Admin token not configured. Run whatsapp_configure with admin_token first."
     try:
-        users = await client.admin_list_users()
-        user_list = users.get("data", [])
-        for user in user_list:
-            if user.get("token") == client.token:
-                await client.admin_update_user(
-                    user["id"],
-                    Events="Message,ReadReceipt,HistorySync",
-                    History=1,
-                )
+        if action == "list_users":
+            result = await client.admin_list_users()
+            return _format_result(result)
+
+        elif action == "create_user":
+            if not name or not token:
+                return "❌ create_user requires name and token params."
+            result = await client.admin_create_user(name, token)
+            return _format_result(result)
+
+        elif action == "delete_user":
+            if not name:
+                return "❌ delete_user requires name param."
+            if not confirmed:
                 return (
-                    f"✅ Histórico ativado para o usuário '{user.get('name')}'!\n"
-                    "Agora use whatsapp_get_messages para ler mensagens."
+                    f"⚠️ Confirma que quer DELETAR o usuário '{name}'? "
+                    "Chame novamente com confirmed=True."
                 )
-        return "❌ Usuário com esse token não encontrado."
+            result = await client.admin_delete_user(name)
+            return _format_result(result)
+
+        elif action == "enable_history":
+            users = await client.admin_list_users()
+            user_list = users.get("data", [])
+            for user in user_list:
+                if user.get("token") == client.token:
+                    await client.admin_update_user(
+                        user["id"],
+                        Events="Message,ReadReceipt,HistorySync",
+                        History=1,
+                    )
+                    return f"✅ Histórico ativado para '{user.get('name')}'! Use whatsapp_get_messages para ler."
+            return "❌ Usuário com esse token não encontrado."
+
+        else:
+            return f"❌ Unknown action '{action}'. Valid: list_users, create_user, delete_user, enable_history."
     except Exception as e:
         return f"❌ Erro: {str(e)}"
 

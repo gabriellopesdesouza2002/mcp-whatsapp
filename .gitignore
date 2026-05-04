@@ -27,3 +27,6 @@ PIPELINE.md
 .DS_Store
 Thumbs.db
 *.ps1
+
+# Others
+*temp*

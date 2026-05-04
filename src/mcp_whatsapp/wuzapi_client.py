@@ -240,9 +240,11 @@ class WuzAPIClient:
         self, phone: str, count: int = 50
     ) -> dict[str, Any]:
         """Get messages from a chat."""
+        # Ensure full JID format (e.g. 5511999998888@s.whatsapp.net)
+        jid = phone if "@" in phone else f"{phone}@s.whatsapp.net"
         return await self._request("GET", "/chat/history", params={
-            "chat_jid": phone,
-            "Count": count,
+            "chat_jid": jid,
+            "limit": count,
         })
 
     async def get_chats(self) -> dict[str, Any]:

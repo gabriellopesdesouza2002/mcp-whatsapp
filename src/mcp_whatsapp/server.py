@@ -5,20 +5,22 @@ Exposes WhatsApp capabilities as MCP tools that any AI (Claude, Gemini, etc.) ca
 Uses the official MCP Python SDK with stdio transport.
 """
 
-import base64
+import asyncio
+import http.server
 import json
 import logging
 import os
 import re
 import sqlite3
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 from mcp.server.fastmcp import FastMCP
-from mcp.types import ImageContent, TextContent
 
 from mcp_whatsapp.wuzapi_client import WuzAPIClient
 
@@ -144,11 +146,85 @@ if not WUZAPI_TOKEN:
 DB_PATH = Path(__file__).parent.parent.parent / "wuzapi_data" / "users.db"
 
 # ──────────────────────────────────────────────
+# Mini Media Server (serves QR code as PNG via HTTP)
+# ──────────────────────────────────────────────
+
+MEDIA_DIR = Path(__file__).parent.parent.parent / "temp_media"
+MEDIA_DIR.mkdir(exist_ok=True)
+MEDIA_PORT = int(os.getenv("WUZAPI_MEDIA_PORT", "7144"))
+
+
+class _SilentHandler(http.server.SimpleHTTPRequestHandler):
+    """Serve files from MEDIA_DIR, suppress logs."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(MEDIA_DIR), **kwargs)
+
+    def log_message(self, format, *args):  # noqa: A002
+        pass
+
+
+def _start_media_server() -> None:
+    try:
+        with http.server.ThreadingHTTPServer(("localhost", MEDIA_PORT), _SilentHandler) as httpd:
+            httpd.serve_forever()
+    except OSError:
+        pass  # Port already in use — another instance is running
+
+
+_media_thread = threading.Thread(target=_start_media_server, daemon=True)
+_media_thread.start()
+
+
+def _save_qr_and_url(image_bytes: bytes) -> str:
+    """Save QR PNG to temp dir and return its localhost URL."""
+    qr_path = MEDIA_DIR / "qr.png"
+    qr_path.write_bytes(image_bytes)
+    return f"http://localhost:{MEDIA_PORT}/qr.png"
+
+# ──────────────────────────────────────────────
+# ──────────────────────────────────────────────
+# Background sync (keeps session alive + syncs new messages every 5 min)
+# ──────────────────────────────────────────────
+
+async def _sync_loop() -> None:
+    """Keep session alive: reconnect if disconnected, health-ping if connected."""
+    await asyncio.sleep(60)  # Initial delay — let session stabilize first
+    while True:
+        try:
+            status = await client.get_status()
+            data = status.get("data", {})
+            logged_in = data.get("loggedIn", False)
+            connected = data.get("connected", False)
+            if logged_in and not connected:
+                # Session exists but lost connection — try to reconnect
+                await client.connect()
+            elif not logged_in:
+                # No active session — nothing to do until user calls connect
+                pass
+            else:
+                # All good — just a health ping to keep the TCP connection alive
+                await client.health()
+        except Exception:
+            pass
+        await asyncio.sleep(300)  # Every 5 minutes
+
+
+@asynccontextmanager
+async def _lifespan(app):
+    task = asyncio.create_task(_sync_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+# ──────────────────────────────────────────────
 # MCP Server & WuzAPI Client
 # ──────────────────────────────────────────────
 
 mcp = FastMCP(
     "WhatsApp MCP",
+    lifespan=_lifespan,
     instructions=(
         "MCP server that provides WhatsApp messaging capabilities via WuzAPI. "
         "Use whatsapp_connect() first to start a session, then use messaging tools to send/receive messages.\n\n"
@@ -179,31 +255,50 @@ client = WuzAPIClient(
 
 
 @mcp.tool()
-async def whatsapp_connect() -> list[TextContent | ImageContent]:
+async def whatsapp_connect() -> str:
     """Connect to WhatsApp. If not yet paired, automatically shows the QR code
     to scan with your phone. Just call this once and scan the QR."""
-    # Ensure user exists before trying to connect (Plug & Play)
     await client.ensure_user_exists()
-    
+
     result = await client.connect()
 
-    # Show QR if: connected OK with no jid, OR "already connected" (needs pairing)
     already_connected = result.get("error") == "already connected"
     not_logged = not result.get("data", {}).get("jid")
+
+    # Show QR if session needs pairing
     if (result.get("success") and not_logged) or already_connected:
         image_bytes = await client.get_qrcode_image()
         if image_bytes:
-            b64 = base64.b64encode(image_bytes).decode("utf-8")
-            return [
-                TextContent(
-                    type="text",
-                    text="📱 Scan this QR code with WhatsApp on your phone:\n"
-                         "WhatsApp → ⋮ → Linked devices → Link a device",
-                ),
-                ImageContent(type="image", data=b64, mimeType="image/png"),
-            ]
+            url = _save_qr_and_url(image_bytes)
+            return (
+                "📱 Escaneie o QR code com o WhatsApp do seu celular:\n"
+                "WhatsApp → ⋮ → Dispositivos conectados → Conectar dispositivo\n\n"
+                f"![QR Code]({url})"
+            )
 
-    return [TextContent(type="text", text=_format_result(result))]
+    # Already logged in — auto-enable history silently
+    if result.get("data", {}).get("jid"):
+        await _auto_enable_history()
+
+    return _format_result(result)
+
+
+async def _auto_enable_history() -> None:
+    """Silently enable history+events for the current user after connect."""
+    if not client.admin_token:
+        return
+    try:
+        users = await client.admin_list_users()
+        for user in users.get("data", []):
+            if user.get("token") == client.token:
+                await client.admin_update_user(
+                    user["id"],
+                    Events="Message,ReadReceipt,HistorySync",
+                    History=1,
+                )
+                break
+    except Exception:
+        pass
 
 
 @mcp.tool()
@@ -232,23 +327,19 @@ async def whatsapp_status() -> str:
 
 
 @mcp.tool()
-async def whatsapp_get_qrcode() -> list[TextContent | ImageContent]:
+async def whatsapp_get_qrcode() -> list:
     """Get the QR code for WhatsApp Web pairing. The user needs to scan
     this QR code with their phone to connect the session.
     Returns the QR code as a viewable image."""
-    # Try to get the QR as image first
     image_bytes = await client.get_qrcode_image()
     if image_bytes:
-        b64 = base64.b64encode(image_bytes).decode("utf-8")
-        return [
-            TextContent(type="text", text="Scan this QR code with your WhatsApp phone app:"),
-            ImageContent(type="image", data=b64, mimeType="image/png"),
-        ]
-    # Fallback to JSON response
+        url = _save_qr_and_url(image_bytes)
+        return (
+            "Escaneie o QR code com o WhatsApp do seu celular:\n\n"
+            f"![QR Code]({url})"
+        )
     result = await client.get_qrcode()
-    return [
-        TextContent(type="text", text=_format_result(result)),
-    ]
+    return _format_result(result)
 
 
 @mcp.tool()
@@ -256,6 +347,39 @@ async def whatsapp_health() -> str:
     """Check the WuzAPI service health status."""
     result = await client.health()
     return _format_result(result)
+
+
+@mcp.tool()
+async def whatsapp_force_sync() -> str:
+    """Force a full WhatsApp history sync by reconnecting the session.
+    Use this when messages are missing or outdated — it triggers WuzAPI to
+    pull the latest message history from WhatsApp servers.
+    The sync runs in the background; wait ~30 seconds then fetch messages again."""
+    try:
+        # Check current status
+        status = await client.get_status()
+        data = status.get("data", {})
+        was_connected = data.get("connected", False)
+        logged_in = data.get("loggedIn", False)
+
+        if not logged_in:
+            return "❌ Nenhuma sessão ativa. Use whatsapp_connect primeiro para parear o dispositivo."
+
+        if was_connected:
+            # Disconnect to force a clean reconnect
+            await client.disconnect()
+            await asyncio.sleep(2)
+
+        # Reconnect — this triggers HistorySync on WuzAPI
+        await client.connect()
+
+        return (
+            "🔄 Sincronização forçada iniciada!\n\n"
+            "O WuzAPI está puxando o histórico de mensagens do WhatsApp.\n"
+            "⏳ Aguarde ~30 segundos e depois use whatsapp_get_messages para ver as mensagens atualizadas."
+        )
+    except Exception as e:
+        return f"❌ Erro ao forçar sincronização: {e}"
 
 
 # ══════════════════════════════════════════════
@@ -472,15 +596,56 @@ async def whatsapp_download_media(phone: str, message_id: str) -> str:
 
 
 @mcp.tool()
-async def whatsapp_get_messages(phone: str, count: int = 50) -> str:
-    """Get recent messages from a WhatsApp chat.
+async def whatsapp_get_messages(phone: str, count: int = 20) -> str:
+    """Get recent messages from a WhatsApp chat, sorted by real message timestamp.
 
     Args:
         phone: Phone number to get messages from.
-        count: Number of messages to retrieve (default: 50).
+        count: Number of messages to retrieve (default: 20).
     """
-    result = await client.get_messages(phone, count)
-    return _format_result(result)
+    if not DB_PATH.exists():
+        result = await client.get_messages(phone, count)
+        return _format_result(result)
+
+    try:
+        jid = phone if "@" in phone else f"{phone}@s.whatsapp.net"
+        # Fetch a buffer (count*4) from the most recent rows to allow proper timestamp sorting
+        fetch_limit = count * 4
+        sql = "SELECT datajson, sender_jid, message_id, media_link FROM message_history WHERE chat_jid = ? ORDER BY id DESC LIMIT ?"
+        rows = await _query_db(sql, (jid, fetch_limit))
+
+        msgs = []
+        for datajson_str, sender_jid, message_id, media_link in rows:
+            try:
+                dj = json.loads(datajson_str)
+                ts = dj.get("Info", {}).get("Timestamp", "")
+                text = (
+                    dj.get("Message", {}).get("conversation")
+                    or dj.get("Message", {}).get("extendedTextMessage", {}).get("text")
+                    or ""
+                )
+                msg_type = dj.get("Info", {}).get("Type", "text")
+                is_me = dj.get("Info", {}).get("IsFromMe", False)
+                if ts:
+                    entry: dict[str, Any] = {
+                        "ts": ts,
+                        "from": "me" if is_me else sender_jid,
+                        "text": text or f"[{msg_type}]",
+                        "id": message_id,
+                    }
+                    if media_link:
+                        entry["media"] = media_link
+                    msgs.append(entry)
+            except Exception:
+                continue
+
+        msgs.sort(key=lambda m: m["ts"])
+        recent = msgs[-count:]
+        # Compact JSON — no indentation to save tokens
+        return json.dumps({"ok": True, "n": len(recent), "msgs": recent}, ensure_ascii=False)
+    except Exception as e:
+        result = await client.get_messages(phone, count)
+        return _format_result(result)
 
 
 @mcp.tool()
@@ -719,39 +884,44 @@ async def whatsapp_get_messages_by_contact_name(name: str, only_today: bool = Tr
         jid = contact["jid"]
         contact_name = contact["name"]
         
-        # 2. Query history for this JID
-        sql = "SELECT timestamp, text_content, sender_jid, message_type FROM message_history WHERE chat_jid = ?"
-        params = [jid]
-        
-        if only_today:
-            # Simple date match for today in the format stored in SQLite
-            today_str = datetime.now().strftime("%Y-%m-%d")
-            sql += " AND timestamp LIKE ?"
-            params.append(f"{today_str}%")
-        
-        sql += " ORDER BY timestamp DESC LIMIT ?"
-        params.append(limit)
-        
-        rows = await _query_db(sql, tuple(params))
-        
+        # 2. Query history for this JID using datajson for real timestamps
+        fetch_limit = limit * 4
+        sql = "SELECT datajson, sender_jid, message_id FROM message_history WHERE chat_jid = ? ORDER BY id DESC LIMIT ?"
+        rows = await _query_db(sql, (jid, fetch_limit))
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
         results = []
-        for row in rows:
-            results.append({
-                "time": row[0],
-                "content": row[1] or f"[{row[3]}]",
-                "from_me": row[2] == client.token # This check might need adjustment depending on schema
-            })
-            
+        for datajson_str, sender_jid, message_id in rows:
+            try:
+                dj = json.loads(datajson_str) if datajson_str else {}
+                real_ts = dj.get("Info", {}).get("Timestamp", "")
+                if not real_ts:
+                    continue
+                if only_today and not real_ts.startswith(today_str):
+                    continue
+                text = (
+                    dj.get("Message", {}).get("conversation")
+                    or dj.get("Message", {}).get("extendedTextMessage", {}).get("text")
+                    or f"[{dj.get('Info', {}).get('Type', 'media')}]"
+                )
+                is_me = dj.get("Info", {}).get("IsFromMe", False)
+                results.append({
+                    "ts": real_ts,
+                    "from": "me" if is_me else contact_name,
+                    "text": text,
+                    "id": message_id,
+                })
+            except Exception:
+                continue
+
+        results.sort(key=lambda x: x["ts"])
+        results = results[-limit:]
+
         if not results:
             period = "hoje" if only_today else "recentemente"
             return f"ℹ️ Nenhuma mensagem encontrada de {contact_name} {period}."
-            
-        return _format_result({
-            "success": True,
-            "contact": contact_name,
-            "count": len(results),
-            "messages": results
-        })
+
+        return json.dumps({"contact": contact_name, "n": len(results), "msgs": results}, ensure_ascii=False)
         
     except Exception as e:
         return f"❌ Erro ao buscar mensagens por nome: {str(e)}"
@@ -942,8 +1112,8 @@ async def whatsapp_admin_enable_history() -> str:
             if user.get("token") == client.token:
                 await client.admin_update_user(
                     user["id"],
-                    events="Message,ReadReceipt,HistorySync",
-                    history=True,
+                    Events="Message,ReadReceipt,HistorySync",
+                    History=1,
                 )
                 return (
                     f"✅ Histórico ativado para o usuário '{user.get('name')}'!\n"

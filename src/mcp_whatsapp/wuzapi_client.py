@@ -61,6 +61,10 @@ class WuzAPIClient:
         """Disconnect/Logout from WhatsApp."""
         return await self._request("POST", "/session/disconnect", json_data={})
 
+    async def logout(self) -> dict[str, Any]:
+        """Logout from WhatsApp AND clear session files from disk."""
+        return await self._request("POST", "/session/logout", json_data={})
+
     async def get_status(self) -> dict[str, Any]:
         """Get current connection status."""
         return await self._request("GET", "/session/status")

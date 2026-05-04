@@ -88,17 +88,23 @@ def _build_agent(provider: str, model: str, verbose: bool = False):
         print("❌ Dependência ausente. Execute:\n   pip install mcp-use")
         sys.exit(1)
 
+    # Build a clean env for the MCP subprocess:
+    # Start with the full current environment so the child process has PATH,
+    # SYSTEMROOT, TEMP, etc.  Then overlay only the WuzAPI-specific keys.
+    _subprocess_env = {**os.environ}
+    _subprocess_env.update({
+        "WUZAPI_BASE_URL":    WUZAPI_BASE_URL,
+        "WUZAPI_TOKEN":       WUZAPI_TOKEN,
+        "WUZAPI_ADMIN_TOKEN": WUZAPI_ADMIN_TOKEN,
+        "WUZAPI_HISTORY_SYNC": os.getenv("WUZAPI_HISTORY_SYNC", "true"),
+    })
+
     client = MCPClient({
         "mcpServers": {
             "whatsapp": {
                 "command": VENV_PYTHON,
                 "args": ["-m", "mcp_whatsapp.server"],
-                "env": {
-                    "WUZAPI_BASE_URL":    WUZAPI_BASE_URL,
-                    "WUZAPI_TOKEN":       WUZAPI_TOKEN,
-                    "WUZAPI_ADMIN_TOKEN": WUZAPI_ADMIN_TOKEN,
-                    "WUZAPI_HISTORY_SYNC": os.getenv("WUZAPI_HISTORY_SYNC", "true"),
-                },
+                "env": _subprocess_env,
             }
         }
     })
@@ -128,15 +134,23 @@ def _build_agent(provider: str, model: str, verbose: bool = False):
 # TESTES
 # ══════════════════════════════════════════════════════════════════════════════
 
+_TIMEOUT = 90.0  # segundos por chamada ao agente
+
+
+async def _run(agent, prompt: str) -> str:
+    """Wrapper com timeout para todas as chamadas ao agente."""
+    return await asyncio.wait_for(agent.run(prompt), timeout=_TIMEOUT)
+
+
 async def test_health(agent):
     print("\n🔍 [HEALTH] Verificando saúde do WuzAPI...")
-    result = await agent.run("Check WuzAPI health. Use the whatsapp_health tool.")
+    result = await _run(agent, "Check WuzAPI health. Use the whatsapp_health tool.")
     print(f"✅ Resultado:\n{result}\n")
 
 
 async def test_status(agent):
     print("\n🔍 [STATUS] Verificando status da sessão...")
-    result = await agent.run(
+    result = await _run(agent,
         "Check WhatsApp connection status. Use the whatsapp_status tool and report "
         "if it is connected, disconnected, or waiting for QR scan."
     )
@@ -145,7 +159,7 @@ async def test_status(agent):
 
 async def test_chats(agent):
     print("\n🔍 [CHATS] Listando chats ativos...")
-    result = await agent.run(
+    result = await _run(agent,
         "List all active WhatsApp chats using whatsapp_get_chats. "
         "Show a summary with the number of chats found."
     )
@@ -154,7 +168,7 @@ async def test_chats(agent):
 
 async def test_unread(agent):
     print("\n🔍 [UNREAD] Mensagens recebidas recentes...")
-    result = await agent.run(
+    result = await _run(agent,
         "Get recent incoming WhatsApp messages using whatsapp_get_unread_messages. "
         "Show a summary of who sent what."
     )
@@ -163,7 +177,7 @@ async def test_unread(agent):
 
 async def test_contacts(agent):
     print("\n🔍 [CONTACTS] Buscando contatos...")
-    result = await agent.run(
+    result = await _run(agent,
         "Get the WhatsApp contacts list using whatsapp_get_contacts. "
         "Show how many contacts were found."
     )
@@ -172,7 +186,7 @@ async def test_contacts(agent):
 
 async def test_groups(agent):
     print("\n🔍 [GROUPS] Listando grupos...")
-    result = await agent.run(
+    result = await _run(agent,
         "List all WhatsApp groups using whatsapp_list_groups. "
         "Show how many groups were found and their names."
     )
@@ -184,7 +198,7 @@ async def test_admin(agent):
     if not WUZAPI_ADMIN_TOKEN:
         print("⚠️  WUZAPI_ADMIN_TOKEN não configurado, pulando.")
         return
-    result = await agent.run(
+    result = await _run(agent,
         "List all WuzAPI users using whatsapp_admin_list_users. "
         "Show how many users exist."
     )
@@ -193,7 +207,7 @@ async def test_admin(agent):
 
 async def test_user_info(agent):
     print("\n🔍 [USER_INFO] Info da sessão logada via status...")
-    result = await agent.run(
+    result = await _run(agent,
         "Use whatsapp_status to get the current session info. "
         "Report the phone number (JID), name, and whether history sync is enabled."
     )
@@ -202,7 +216,7 @@ async def test_user_info(agent):
 
 async def test_send(agent, phone: str, message: str):
     print(f"\n📤 [SEND] Enviando mensagem para {phone}...")
-    result = await agent.run(
+    result = await _run(agent,
         f"Send a WhatsApp text message to phone number {phone} "
         f"with this message: '{message}'. Use the whatsapp_send_text tool."
     )
@@ -211,7 +225,7 @@ async def test_send(agent, phone: str, message: str):
 
 async def test_check_phone(agent, phone: str):
     print(f"\n🔍 [CHECK] Verificando se {phone} está no WhatsApp...")
-    result = await agent.run(
+    result = await _run(agent,
         f"Check if the phone number {phone} is registered on WhatsApp "
         f"using whatsapp_check_phones."
     )
@@ -220,7 +234,7 @@ async def test_check_phone(agent, phone: str):
 
 async def test_lookup_phone(agent, phone: str):
     print(f"\n🔍 [LOOKUP] Buscando perfil do número {phone}...")
-    result = await agent.run(
+    result = await _run(agent,
         f"Use whatsapp_get_user_info to get the WhatsApp profile info for phone number {phone}. "
         f"Report the display name and about."
     )
@@ -295,15 +309,19 @@ async def chat_livre(agent):
 
         try:
             print("⏳ ", end="", flush=True)
-            result = await agent.run(user_input)
+            result = await asyncio.wait_for(agent.run(user_input), timeout=90.0)
             # Limpa o "⏳ " e mostra a resposta
             print(f"\r🤖 Assistente: {result}")
+        except asyncio.TimeoutError:
+            print(f"\r⏳ Timeout (90s) — o servidor MCP não respondeu. Verifique se o WuzAPI está rodando.")
         except Exception as e:
             erro_msg = str(e)
             if "rate_limit" in erro_msg.lower() or "429" in erro_msg:
                 print(f"\r⏳ Limite de tokens atingido. Aguarde 1-2 min e tente novamente.")
             elif "413" in erro_msg:
                 print(f"\r⏳ Request muito grande. Tente uma pergunta mais específica.")
+            elif "connection" in erro_msg.lower() or "mcp" in erro_msg.lower():
+                print(f"\r❌ Erro de conexão MCP: {erro_msg[:300]}")
             else:
                 print(f"\r❌ Erro: {erro_msg[:200]}")
 

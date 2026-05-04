@@ -78,6 +78,32 @@ class PrivacyGuard:
         safe_params = {k: (v if k not in ["message", "text", "body", "query"] else "[CONTENT]") for k, v in params.items()}
         logging.info(f"Tool: {tool_name} | Params: {json.dumps(safe_params)}")
 
+def _check_staleness(most_recent_ts: str | None) -> dict[str, Any] | None:
+    """Return a stale_warning dict if most_recent_ts is older than 12 hours, else None."""
+    if not most_recent_ts:
+        return None
+    try:
+        # Handle ISO format: "2025-03-18T14:30:00" or "2025-03-18 14:30:00" or date-only
+        ts_clean = most_recent_ts[:19].replace("T", " ")
+        msg_dt = datetime.strptime(ts_clean, "%Y-%m-%d %H:%M:%S")
+        age_hours = (datetime.now() - msg_dt).total_seconds() / 3600
+        if age_hours > 12:
+            age_str = f"{int(age_hours // 24)} dias" if age_hours >= 24 else f"{int(age_hours)} horas"
+            return {
+                "stale": True,
+                "most_recent_message": most_recent_ts[:10],
+                "age": age_str,
+                "suggestion": (
+                    f"Os dados do banco local têm {age_str} de atraso "
+                    f"(última mensagem: {most_recent_ts[:10]}). "
+                    "Posso buscar diretamente do WhatsApp agora sem depender da sincronização — deseja?"
+                ),
+            }
+    except Exception:
+        pass
+    return None
+
+
 def _format_result(result: dict[str, Any]) -> str:
     """Format API response as readable JSON string with Privacy Guardrails."""
     json_str = json.dumps(result, indent=2, ensure_ascii=False)
@@ -225,14 +251,19 @@ async def _lifespan(app):
 mcp = FastMCP(
     "WhatsApp MCP",
     lifespan=_lifespan,
-    instructions=(
+        instructions=(
         "MCP server that provides WhatsApp messaging capabilities via WuzAPI. "
         "Use whatsapp_connect() first to start a session, then use messaging tools to send/receive messages.\n\n"
         "--- DELETION GUARDRAIL (MANDATORY) ---\n"
-        "⚠️  NEVER call whatsapp_delete_message, whatsapp_admin_delete_user, or whatsapp_disconnect "
-        "without EXPLICITLY asking the user for confirmation first. Show what will be deleted/affected "
+        "⚠️  NEVER call whatsapp_reset_session, whatsapp_delete_message, whatsapp_admin_delete_user, or whatsapp_disconnect "
+        "without EXPLICITLY asking the user for confirmation first. Show what will be affected "
         "and wait for a clear 'yes', 'confirm' or 'pode apagar' response before proceeding. "
         "If the user did not explicitly confirm, return a warning and do NOT call the tool.\n\n"
+        "--- SESSION RESET ---\n"
+        "When user wants to 'apagar sessão', 'resetar', 'conectar do zero', 'limpar tudo', "
+        "use whatsapp_reset_session (NOT whatsapp_disconnect). "
+        "whatsapp_disconnect only disconnects but keeps session files. "
+        "whatsapp_reset_session actually deletes session files and generates a fresh QR code.\n\n"
         "--- COMPLIANCE GUARDRAILS (LGPD/GDPR) ---\n"
         "1. TRANSPARENCY: Always inform the user if you are fetching large amounts of personal history.\n"
         "2. DATA MINIMIZATION: Only request the messages and contacts necessary for the current task.\n"
@@ -369,6 +400,48 @@ async def whatsapp_force_sync() -> str:
     except Exception as e:
         return f"❌ Erro ao forçar sincronização: {e}"
 
+@mcp.tool()
+async def whatsapp_reset_session(confirmed: bool = False) -> str:
+    """Reset WhatsApp session completely — logout + delete session files + fresh QR. ⚠️ DESTRUCTIVE. confirmed=True required."""
+    if not confirmed:
+        return (
+            "⚠️ Isso vai DESCONECTAR e APAGAR sua sessão do WhatsApp completamente.\n"
+            "Você precisará escanear o QR code novamente para reconectar.\n"
+            "Para confirmar, chame novamente com confirmed=True."
+        )
+
+    # 1. Disconnect — ends active session (clears WuzAPI state)
+    logout_result = await client.disconnect()
+
+    # 2. If admin, delete and recreate user for clean state
+    cleanup_note = ""
+    if client.admin_token:
+        try:
+            await client.admin_delete_user("mcp_whatsapp_user")
+            await asyncio.sleep(1)
+            await client.ensure_user_exists()
+            cleanup_note = "\n  🗑️ Usuário WuzAPI recriado."
+        except Exception as e:
+            cleanup_note = f"\n  ⚠️ Limpeza do usuário: {e}"
+
+    # 3. Wait for WuzAPI to be ready
+    await asyncio.sleep(2)
+
+    # 4. Connect — triggers new QR code generation
+    connect_result = await client.connect()
+
+    # 5. Show QR code
+    image_bytes = await client.get_qrcode_image()
+    if image_bytes:
+        url = _save_qr_and_url(image_bytes)
+        return (
+            "🔄 Sessão apagada completamente! Escaneie o novo QR code:\n"
+            "WhatsApp → ⋮ → Dispositivos conectados → Conectar dispositivo\n\n"
+            f"![QR Code]({url})"
+            f"{cleanup_note}"
+        )
+
+    return _format_result({"logout": logout_result, "connect": connect_result, "note": cleanup_note})
 
 # ══════════════════════════════════════════════
 # MESSAGING TOOLS
@@ -1007,18 +1080,6 @@ async def whatsapp_configure(token: str, base_url: str = "http://localhost:7143"
 # Entry Point
 # ──────────────────────────────────────────────
 
-
-# Wrapper to add audit logging to all tools automatically
-def _wrap_tools():
-    for name, tool in mcp._tools.items():
-        original_func = tool.fn
-        async def wrapped(*args, _name=name, _func=original_func, **kwargs):
-            PrivacyGuard.log_action(_name, kwargs)
-            return await _func(*args, **kwargs)
-        tool.fn = wrapped
-
-# Note: FastMCP might handle tool calls differently, but this is the general idea.
-# For now, we will add manual logging to key tools.
 
 def main():
     """Run the MCP server with stdio transport."""

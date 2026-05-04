@@ -59,7 +59,7 @@ class WuzAPIClient:
 
     async def disconnect(self) -> dict[str, Any]:
         """Disconnect/Logout from WhatsApp."""
-        return await self._request("POST", "/session/disconnect")
+        return await self._request("POST", "/session/disconnect", json_data={})
 
     async def get_status(self) -> dict[str, Any]:
         """Get current connection status."""
@@ -296,7 +296,7 @@ class WuzAPIClient:
 
     async def get_user_info(self) -> dict[str, Any]:
         """Get logged-in user info."""
-        return await self._request("POST", "/user/info")
+        return await self._request("POST", "/user/info", json_data={})
 
     async def get_contacts(self) -> dict[str, Any]:
         """Get contacts list."""

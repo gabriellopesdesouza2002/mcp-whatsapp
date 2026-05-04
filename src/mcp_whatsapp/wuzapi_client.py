@@ -294,9 +294,9 @@ class WuzAPIClient:
     # User / Profile
     # ──────────────────────────────────────────────
 
-    async def get_user_info(self) -> dict[str, Any]:
-        """Get logged-in user info."""
-        return await self._request("POST", "/user/info", json_data={})
+    async def get_user_info(self, phone: str) -> dict[str, Any]:
+        """Get WhatsApp info (name, about, business) for a specific phone number."""
+        return await self._request("POST", "/user/info", json_data={"Phone": phone})
 
     async def get_contacts(self) -> dict[str, Any]:
         """Get contacts list."""

@@ -91,7 +91,7 @@ def _build_agent(model: str = "llama-3.3-70b-versatile"):
         temperature=0,          # respostas determinísticas para testes
     )
 
-    return MCPAgent(llm=llm, client=client, max_steps=5, verbose=True)
+    return MCPAgent(llm=llm, client=client, max_steps=3, verbose=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -170,9 +170,22 @@ async def test_check_phone(agent, phone: str):
 
 
 async def test_user_info(agent):
-    """Info do usuário logado."""
-    print("\n🔍 [USER_INFO] Buscando info do usuário logado...")
-    result = await agent.run("Get info about the currently logged-in WhatsApp user using whatsapp_get_user_info.")
+    """Info do usuário logado — usa whatsapp_status que já retorna o JID/número."""
+    print("\n🔍 [USER_INFO] Buscando info do usuário logado via status...")
+    result = await agent.run(
+        "Use whatsapp_status to get the current session info. "
+        "Report the phone number (JID), name, and whether history sync is enabled."
+    )
+    print(f"✅ Resultado:\n{result}\n")
+
+
+async def test_lookup_phone(agent, phone: str):
+    """Busca info de um número específico no WhatsApp."""
+    print(f"\n🔍 [LOOKUP] Buscando info do número {phone}...")
+    result = await agent.run(
+        f"Use whatsapp_get_user_info to get the WhatsApp profile info for phone number {phone}. "
+        f"Report the display name and about."
+    )
     print(f"✅ Resultado:\n{result}\n")
 
 
@@ -223,14 +236,15 @@ def _print_menu():
 ╠══════════════════════════════════════════════╣
 ║  1. Health check                             ║
 ║  2. Status da sessão                         ║
-║  3. Info do usuário logado                   ║
+║  3. Info da sessão logada                    ║
 ║  4. Listar chats                             ║
 ║  5. Mensagens não lidas                      ║
 ║  6. Listar contatos                          ║
 ║  7. Listar grupos                            ║
 ║  8. Admin — listar usuários WuzAPI           ║
 ║  9. Verificar número no WhatsApp             ║
-║  10. Enviar mensagem (REAL — cuidado!)       ║
+║  10. Buscar perfil de um número              ║
+║  11. Enviar mensagem (REAL — cuidado!)       ║
 ║  0. Rodar TODOS os testes (sem envio)        ║
 ║  q. Sair                                     ║
 ╚══════════════════════════════════════════════╝
@@ -269,6 +283,10 @@ async def interactive_menu(agent):
             if phone:
                 await test_check_phone(agent, phone)
         elif choice == "10":
+            phone = input("  📞 Número para buscar perfil (ex: 5511999998888): ").strip()
+            if phone:
+                await test_lookup_phone(agent, phone)
+        elif choice == "11":
             phone   = input("  📞 Número destino (ex: 5511999998888): ").strip()
             message = input("  💬 Mensagem: ").strip()
             confirm = input(f"  ⚠️  Confirma envio REAL para {phone}? (s/N): ").strip().lower()

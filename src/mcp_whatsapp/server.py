@@ -809,9 +809,15 @@ async def whatsapp_forward_message(message_id: str, to_phone: str) -> str:
 
 
 @mcp.tool()
-async def whatsapp_get_user_info() -> str:
-    """Get info about the currently logged-in WhatsApp user."""
-    result = await client.get_user_info()
+async def whatsapp_get_user_info(phone: str) -> str:
+    """Get WhatsApp info (display name, about, business info) for a specific phone number.
+
+    Args:
+        phone: Phone number to look up (e.g. '5511999998888'). Do NOT include '+' prefix.
+
+    Note: To check YOUR OWN session info (your number, connection status), use whatsapp_status instead.
+    """
+    result = await client.get_user_info(phone)
     return _format_result(result)
 
 

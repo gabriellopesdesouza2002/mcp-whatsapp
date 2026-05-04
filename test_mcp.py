@@ -17,14 +17,22 @@ Uso:
     python test_mcp.py --test groups
     python test_mcp.py --test admin
     python test_mcp.py --test unread
+    python test_mcp.py --chat                             # vai direto pro chat livre
 """
 
 import asyncio
+import logging
 import os
 import sys
 import argparse
 from pathlib import Path
 from dotenv import load_dotenv
+
+# ─── Silencia loggers barulhentos por padrão ────────────────────────────────────
+# Mantém apenas avisos críticos — remova/ajuste se quiser ver tool calls raw
+for _noisy in ("mcp_use", "mcp_use.agents.display", "langchain", "langsmith", "httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
+logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
 # ─── Config ────────────────────────────────────────────────────────────────────
 ENV_FILE = Path(__file__).parent / ".env"
@@ -35,7 +43,7 @@ WUZAPI_TOKEN       = os.getenv("WUZAPI_TOKEN", "")
 WUZAPI_ADMIN_TOKEN = os.getenv("WUZAPI_ADMIN_TOKEN", "")
 
 GROQ_API_KEY  = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL    = os.getenv("GROQ_MODEL", "mixtral-8x7b-32768")
+GROQ_MODEL    = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL   = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
@@ -72,7 +80,7 @@ def _check_requirements(provider: str):
 
 
 # ─── Agent ─────────────────────────────────────────────────────────────────────
-def _build_agent(provider: str, model: str):
+def _build_agent(provider: str, model: str, verbose: bool = False):
     """Monta o MCPAgent com o provider escolhido e o servidor MCP local."""
     try:
         from mcp_use import MCPAgent, MCPClient
@@ -113,7 +121,7 @@ def _build_agent(provider: str, model: str):
         provider_label = f"Groq ({model})"
 
     print(f"🤖 Provider : {provider_label}")
-    return MCPAgent(llm=llm, client=client, max_steps=6, verbose=True)
+    return MCPAgent(llm=llm, client=client, max_steps=10, verbose=verbose)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -252,28 +260,80 @@ async def run_all(agent):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# CHAT LIVRE (conversacional)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def chat_livre(agent):
+    """Loop conversacional: o usuário digita qualquer coisa em português."""
+    print("""
+╔══════════════════════════════════════════════════════════╗
+║  💬 Chat Livre — digite qualquer comando em português    ║
+║                                                          ║
+║  Exemplos:                                               ║
+║    "quais mensagens não li hoje?"                        ║
+║    "mande 'boa noite ❤️' para 5511999998888"             ║
+║    "quantos grupos eu tenho?"                            ║
+║    "qual o meu número logado?"                           ║
+║    "liste os 5 contatos mais recentes"                   ║
+║                                                          ║
+║  Digite 'voltar' para retornar ao menu                   ║
+╚══════════════════════════════════════════════════════════╝
+""")
+
+    while True:
+        try:
+            user_input = input("\n🧑 Você: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n👋 Saindo do chat...")
+            break
+
+        if not user_input:
+            continue
+        if user_input.lower() in ("voltar", "sair", "menu", "q"):
+            print("↩️  Voltando ao menu...\n")
+            break
+
+        try:
+            print("⏳ ", end="", flush=True)
+            result = await agent.run(user_input)
+            # Limpa o "⏳ " e mostra a resposta
+            print(f"\r🤖 Assistente: {result}")
+        except Exception as e:
+            erro_msg = str(e)
+            if "rate_limit" in erro_msg.lower() or "429" in erro_msg:
+                print(f"\r⏳ Limite de tokens atingido. Aguarde 1-2 min e tente novamente.")
+            elif "413" in erro_msg:
+                print(f"\r⏳ Request muito grande. Tente uma pergunta mais específica.")
+            else:
+                print(f"\r❌ Erro: {erro_msg[:200]}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MENU INTERATIVO
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _print_menu(provider: str, model: str):
     print(f"""
-╔══════════════════════════════════════════════════════╗
-║      MCP WhatsApp — Tester ({provider}: {model[:20]:<20})  ║
-╠══════════════════════════════════════════════════════╣
-║  1.  Health check                                    ║
-║  2.  Status da sessão                                ║
-║  3.  Info da sessão logada                           ║
-║  4.  Listar chats                                    ║
-║  5.  Mensagens recebidas recentes                    ║
-║  6.  Listar contatos                                 ║
-║  7.  Listar grupos                                   ║
-║  8.  Admin — listar usuários WuzAPI                  ║
-║  9.  Verificar número no WhatsApp                    ║
-║  10. Buscar perfil de um número                      ║
-║  11. Enviar mensagem (REAL — cuidado!)               ║
-║  0.  Rodar TODOS os testes (sem envio)               ║
-║  q.  Sair                                            ║
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════════╗
+║    MCP WhatsApp — Tester ({provider}: {model[:18]:<18})      ║
+╠══════════════════════════════════════════════════════════════╣
+║  1.  Health check                                             ║
+║  2.  Status da sessão                                         ║
+║  3.  Info da sessão logada                                    ║
+║  4.  Listar chats                                             ║
+║  5.  Mensagens recebidas recentes                             ║
+║  6.  Listar contatos                                          ║
+║  7.  Listar grupos                                            ║
+║  8.  Admin — listar usuários WuzAPI                           ║
+║  9.  Verificar número no WhatsApp                             ║
+║  10. Buscar perfil de um número                               ║
+║  11. Enviar mensagem (REAL — cuidado!)                        ║
+║  ─────────────────────────────────────────────────            ║
+║  c.  💬 CHAT LIVRE (fale qualquer coisa)                     ║
+║  ─────────────────────────────────────────────────            ║
+║  0.  Rodar TODOS os testes (sem envio)                        ║
+║  q.  Sair                                                     ║
+╚══════════════════════════════════════════════════════════════╝
 """)
 
 
@@ -319,6 +379,8 @@ async def interactive_menu(agent, provider: str, model: str):
                 await test_send(agent, phone, message)
             else:
                 print("  ↩️  Cancelado.")
+        elif choice == "c":
+            await chat_livre(agent)
         else:
             print("  ⚠️  Opção inválida.")
 
@@ -346,10 +408,17 @@ async def main():
     )
     parser.add_argument("--phone",   default="", help="Número para --test send")
     parser.add_argument("--message", default="Olá! Teste via MCP WhatsApp 🤖", help="Mensagem para --test send")
+    parser.add_argument("--verbose", action="store_true", help="Mostra logs detalhados do agente (debug)")
+    parser.add_argument("--chat",    action="store_true", help="Vai direto pro chat livre (sem menu)")
     args = parser.parse_args()
 
     provider = args.provider
     model    = args.model or (OPENAI_MODEL if provider == "openai" else GROQ_MODEL)
+
+    # Se --verbose, habilita os loggers que silenciamos no topo
+    if args.verbose:
+        for _log in ("mcp_use", "mcp_use.agents.display"):
+            logging.getLogger(_log).setLevel(logging.INFO)
 
     _check_requirements(provider)
 
@@ -361,9 +430,11 @@ async def main():
     print(f"   Modelo      : {model}")
 
     print("\n🔧 Iniciando agente (pode demorar alguns segundos)...")
-    agent = _build_agent(provider, model)
+    agent = _build_agent(provider, model, verbose=args.verbose)
 
-    if args.test == "health":
+    if args.chat:
+        await chat_livre(agent)
+    elif args.test == "health":
         await test_health(agent)
     elif args.test == "status":
         await test_status(agent)

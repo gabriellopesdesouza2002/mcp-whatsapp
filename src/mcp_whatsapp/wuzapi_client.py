@@ -248,8 +248,8 @@ class WuzAPIClient:
         })
 
     async def get_chats(self) -> dict[str, Any]:
-        """List all active chats/conversations."""
-        return await self._request("GET", "/chat/list")
+        """List active chats — queries local DB via server.py, not the HTTP API."""
+        return {"note": "use whatsapp_get_chats MCP tool which reads from local DB"}
 
     async def reply_message(
         self, phone: str, message: str, quoted_message_id: str
@@ -287,8 +287,8 @@ class WuzAPIClient:
         })
 
     async def get_unread_messages(self) -> dict[str, Any]:
-        """Get all unread messages across all chats."""
-        return await self._request("GET", "/chat/unread")
+        """Not available via WuzAPI HTTP API — handled directly via SQLite in server.py."""
+        return {"ok": False, "note": "use whatsapp_get_unread_messages MCP tool which reads from local DB"}
 
     # ──────────────────────────────────────────────
     # User / Profile

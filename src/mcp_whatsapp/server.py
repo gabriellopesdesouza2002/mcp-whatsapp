@@ -524,8 +524,45 @@ async def whatsapp_get_messages(phone: str, count: int = 20) -> str:
 @mcp.tool()
 async def whatsapp_get_chats() -> str:
     """List all active WhatsApp chats with last message info."""
-    result = await client.get_chats()
-    return _format_result(result)
+    if not DB_PATH.exists():
+        return "⚠️ Database not found. Connect WhatsApp and sync history first."
+
+    try:
+        sql = """
+            SELECT chat_jid, MAX(id) as last_id
+            FROM message_history
+            GROUP BY chat_jid
+            ORDER BY last_id DESC
+            LIMIT 100
+        """
+        rows = await _query_db(sql)
+
+        if not rows:
+            return json.dumps({"ok": True, "n": 0, "chats": []})
+
+        # Fetch last message text for each chat
+        chats = []
+        for (chat_jid, _) in rows:
+            msg_sql = "SELECT datajson, timestamp FROM message_history WHERE chat_jid = ? ORDER BY id DESC LIMIT 1"
+            msg_rows = await _query_db(msg_sql, (chat_jid,))
+            last_msg = ""
+            last_ts = ""
+            if msg_rows:
+                try:
+                    dj = json.loads(msg_rows[0][0] or "{}")
+                    last_msg = (
+                        dj.get("Message", {}).get("conversation")
+                        or dj.get("Message", {}).get("extendedTextMessage", {}).get("text")
+                        or f"[{dj.get('Info', {}).get('Type', 'media')}]"
+                    )
+                    last_ts = dj.get("Info", {}).get("Timestamp", msg_rows[0][1] or "")
+                except Exception:
+                    pass
+            chats.append({"jid": chat_jid, "last_ts": last_ts, "last_msg": last_msg[:80]})
+
+        return json.dumps({"ok": True, "n": len(chats), "chats": chats}, ensure_ascii=False)
+    except Exception as e:
+        return f"❌ Error listing chats: {e}"
 
 
 @mcp.tool()
@@ -556,10 +593,40 @@ async def whatsapp_send_poll(phone: str, question: str, options: list[str], max_
 
 
 @mcp.tool()
-async def whatsapp_get_unread_messages() -> str:
-    """Get all unread messages across all chats."""
-    result = await client.get_unread_messages()
-    return _format_result(result)
+async def whatsapp_get_unread_messages(limit: int = 20) -> str:
+    """Get recent incoming messages across all chats (from others, not sent by you). limit: default 20."""
+    if not DB_PATH.exists():
+        return "⚠️ Database not found. Connect WhatsApp and sync history first."
+    try:
+        # WuzAPI has no /chat/unread endpoint — we approximate by fetching recent incoming msgs
+        sql = """
+            SELECT chat_jid, datajson, timestamp
+            FROM message_history
+            WHERE json_extract(datajson, '$.Info.FromMe') = 0
+               OR json_extract(datajson, '$.Info.FromMe') IS NULL
+            ORDER BY id DESC
+            LIMIT ?
+        """
+        rows = await _query_db(sql, (limit,))
+        if not rows:
+            return json.dumps({"ok": True, "n": 0, "messages": []})
+        msgs = []
+        for (chat_jid, datajson, ts) in rows:
+            try:
+                dj = json.loads(datajson or "{}")
+                text = (
+                    dj.get("Message", {}).get("conversation")
+                    or dj.get("Message", {}).get("extendedTextMessage", {}).get("text")
+                    or f"[{dj.get('Info', {}).get('Type', 'media')}]"
+                )
+                sender = dj.get("Info", {}).get("Sender", chat_jid)
+                timestamp = dj.get("Info", {}).get("Timestamp", ts or "")
+                msgs.append({"chat": chat_jid, "from": sender, "ts": timestamp, "text": text[:120]})
+            except Exception:
+                continue
+        return json.dumps({"ok": True, "n": len(msgs), "messages": msgs}, ensure_ascii=False)
+    except Exception as e:
+        return f"❌ Error fetching messages: {e}"
 
 
 @mcp.tool()

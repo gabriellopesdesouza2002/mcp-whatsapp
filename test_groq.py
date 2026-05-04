@@ -92,7 +92,7 @@ def _build_agent(model: str = "llama-3.3-70b-versatile"):
         temperature=0,          # respostas determinísticas para testes
     )
 
-    return MCPAgent(llm=llm, client=client, max_steps=3, verbose=True)
+    return MCPAgent(llm=llm, client=client, max_steps=6, verbose=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -256,8 +256,7 @@ client = WuzAPIClient(
 
 @mcp.tool()
 async def whatsapp_connect() -> str:
-    """Connect to WhatsApp. If not yet paired, automatically shows the QR code
-    to scan with your phone. Just call this once and scan the QR."""
+    """Connect to WhatsApp. Shows QR code if not yet paired — scan with phone."""
     await client.ensure_user_exists()
 
     result = await client.connect()
@@ -303,12 +302,7 @@ async def _auto_enable_history() -> None:
 
 @mcp.tool()
 async def whatsapp_disconnect(confirmed: bool = False) -> str:
-    """Disconnect/Logout from WhatsApp session.
-
-    ⚠️ DESTRUCTIVE: This will disconnect your WhatsApp session.
-    Args:
-        confirmed: Must be True to proceed. Always ask the user explicitly before disconnecting.
-    """
+    """Logout from WhatsApp. ⚠️ DESTRUCTIVE. confirmed=True required — always ask user first."""
     if not confirmed:
         return (
             "⚠️ Você tem certeza que quer DESCONECTAR o WhatsApp?\n"
@@ -320,17 +314,14 @@ async def whatsapp_disconnect(confirmed: bool = False) -> str:
 
 @mcp.tool()
 async def whatsapp_status() -> str:
-    """Get the current WhatsApp connection status. Returns whether
-    the session is connected, disconnected, or waiting for QR scan."""
+    """Get WhatsApp session status: connected/disconnected/waiting QR. Returns JID and history sync info."""
     result = await client.get_status()
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_qrcode() -> list:
-    """Get the QR code for WhatsApp Web pairing. The user needs to scan
-    this QR code with their phone to connect the session.
-    Returns the QR code as a viewable image."""
+    """Get QR code image for WhatsApp pairing. Scan with phone to connect."""
     image_bytes = await client.get_qrcode_image()
     if image_bytes:
         url = _save_qr_and_url(image_bytes)
@@ -344,17 +335,14 @@ async def whatsapp_get_qrcode() -> list:
 
 @mcp.tool()
 async def whatsapp_health() -> str:
-    """Check the WuzAPI service health status."""
+    """Check WuzAPI service health (uptime, memory, version)."""
     result = await client.health()
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_force_sync() -> str:
-    """Force a full WhatsApp history sync by reconnecting the session.
-    Use this when messages are missing or outdated — it triggers WuzAPI to
-    pull the latest message history from WhatsApp servers.
-    The sync runs in the background; wait ~30 seconds then fetch messages again."""
+    """Force full history sync by reconnecting. Use when messages are missing. Wait ~30s after."""
     try:
         # Check current status
         status = await client.get_status()
@@ -389,220 +377,105 @@ async def whatsapp_force_sync() -> str:
 
 @mcp.tool()
 async def whatsapp_send_text(phone: str, message: str) -> str:
-    """Send a text message via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-               Do NOT include '+' prefix.
-        message: The text message content to send.
-    """
+    """Send WhatsApp text. phone: country code, no '+' (e.g. 5511999998888). message: text content."""
     result = await client.send_text(phone, message)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_image(
-    phone: str, image_url: str, caption: str = ""
-) -> str:
-    """Send an image via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        image_url: URL of the image to send.
-        caption: Optional caption for the image.
-    """
+async def whatsapp_send_image(phone: str, image_url: str, caption: str = "") -> str:
+    """Send image via WhatsApp. phone: no '+'. image_url: public URL. caption: optional."""
     result = await client.send_image(phone, image_url, caption)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_document(
-    phone: str, document_url: str, filename: str = "", caption: str = ""
-) -> str:
-    """Send a document/file via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        document_url: URL of the document to send.
-        filename: Optional filename to display.
-        caption: Optional caption for the document.
-    """
+async def whatsapp_send_document(phone: str, document_url: str, filename: str = "", caption: str = "") -> str:
+    """Send document/file via WhatsApp. phone: no '+'. document_url: public URL. filename/caption: optional."""
     result = await client.send_document(phone, document_url, filename, caption)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_send_audio(phone: str, audio_url: str) -> str:
-    """Send an audio message via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        audio_url: URL of the audio file to send.
-    """
+    """Send audio via WhatsApp. phone: no '+'. audio_url: public URL."""
     result = await client.send_audio(phone, audio_url)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_video(
-    phone: str, video_url: str, caption: str = ""
-) -> str:
-    """Send a video via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        video_url: URL of the video to send.
-        caption: Optional caption for the video.
-    """
+async def whatsapp_send_video(phone: str, video_url: str, caption: str = "") -> str:
+    """Send video via WhatsApp. phone: no '+'. video_url: public URL. caption: optional."""
     result = await client.send_video(phone, video_url, caption)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_send_sticker(phone: str, sticker_url: str) -> str:
-    """Send a sticker via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        sticker_url: URL of the sticker image (WebP format recommended).
-    """
+    """Send sticker via WhatsApp. phone: no '+'. sticker_url: public URL (WebP recommended)."""
     result = await client.send_sticker(phone, sticker_url)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_location(
-    phone: str, latitude: float, longitude: float, name: str = ""
-) -> str:
-    """Send a location via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        latitude: Location latitude.
-        longitude: Location longitude.
-        name: Optional name for the location.
-    """
+async def whatsapp_send_location(phone: str, latitude: float, longitude: float, name: str = "") -> str:
+    """Send location via WhatsApp. phone: no '+'. latitude/longitude: coords. name: optional label."""
     result = await client.send_location(phone, latitude, longitude, name)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_contact(
-    phone: str, contact_name: str, contact_phone: str
-) -> str:
-    """Send a contact card (vCard) via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        contact_name: Name of the contact to share.
-        contact_phone: Phone number of the contact to share.
-    """
+async def whatsapp_send_contact(phone: str, contact_name: str, contact_phone: str) -> str:
+    """Send contact card (vCard) via WhatsApp. phone: recipient no '+'. contact_name/contact_phone: contact to share."""
     result = await client.send_contact(phone, contact_name, contact_phone)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_send_link(phone: str, url: str, text: str = "") -> str:
-    """Send a link with preview via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        url: The URL to send.
-        text: Optional accompanying text.
-    """
+    """Send link with preview via WhatsApp. phone: no '+'. url: link. text: optional message."""
     result = await client.send_link(phone, url, text)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_buttons(
-    phone: str,
-    text: str,
-    buttons: list[dict[str, str]],
-    title: str = "",
-    footer: str = "",
-) -> str:
-    """Send an interactive buttons message via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        text: The body text of the message.
-        buttons: List of button objects, each with 'ButtonId' and 'ButtonText'.
-        title: Optional message title.
-        footer: Optional footer text.
-    """
+async def whatsapp_send_buttons(phone: str, text: str, buttons: list[dict[str, str]], title: str = "", footer: str = "") -> str:
+    """Send interactive buttons message. phone: no '+'. buttons: [{ButtonId, ButtonText}]. title/footer: optional."""
     result = await client.send_buttons(phone, text, buttons, title, footer)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_send_list(
-    phone: str,
-    text: str,
-    button_text: str,
-    sections: list[dict[str, Any]],
-    title: str = "",
-    footer: str = "",
-) -> str:
-    """Send an interactive list message via WhatsApp.
-
-    Args:
-        phone: Recipient phone number with country code (e.g. '5511999998888').
-        text: The body text of the message.
-        button_text: Text for the list button.
-        sections: List of section objects with 'Title' and 'Rows'.
-        title: Optional message title.
-        footer: Optional footer text.
-    """
+async def whatsapp_send_list(phone: str, text: str, button_text: str, sections: list[dict[str, Any]], title: str = "", footer: str = "") -> str:
+    """Send interactive list message. sections: [{Title, Rows}]. button_text: list button label. title/footer: optional."""
     result = await client.send_list(phone, text, button_text, sections, title, footer)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_react(phone: str, message_id: str, emoji: str) -> str:
-    """React to a WhatsApp message with an emoji.
-
-    Args:
-        phone: Phone number of the chat containing the message.
-        message_id: ID of the message to react to.
-        emoji: Emoji to react with (e.g. '👍', '❤️').
-    """
+    """React to a message with emoji. phone: chat number. message_id: target msg. emoji: e.g. '👍'."""
     result = await client.react(phone, message_id, emoji)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_mark_read(phone: str, message_ids: list[str]) -> str:
-    """Mark WhatsApp messages as read.
-
-    Args:
-        phone: Phone number of the chat.
-        message_ids: List of message IDs to mark as read.
-    """
+    """Mark messages as read. phone: chat number. message_ids: list of IDs."""
     result = await client.mark_read(phone, message_ids)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_download_media(phone: str, message_id: str) -> str:
-    """Download media (image, audio, video, document) from a WhatsApp message.
-
-    Args:
-        phone: Phone number of the chat containing the message.
-        message_id: ID of the message with the media to download.
-    """
+    """Download media from a message (image/audio/video/doc). phone: chat. message_id: target msg."""
     result = await client.download_media(phone, message_id)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_messages(phone: str, count: int = 20) -> str:
-    """Get recent messages from a WhatsApp chat, sorted by real message timestamp.
-
-    Args:
-        phone: Phone number to get messages from.
-        count: Number of messages to retrieve (default: 20).
-    """
+    """Get recent messages from a chat, sorted by timestamp. phone: no '+'. count: default 20."""
     if not DB_PATH.exists():
         result = await client.get_messages(phone, count)
         return _format_result(result)
@@ -650,40 +523,21 @@ async def whatsapp_get_messages(phone: str, count: int = 20) -> str:
 
 @mcp.tool()
 async def whatsapp_get_chats() -> str:
-    """List all active WhatsApp conversations with last message info.
-    Use this to see recent chats, find who messaged you, or get a conversation overview."""
+    """List all active WhatsApp chats with last message info."""
     result = await client.get_chats()
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_reply_message(
-    phone: str, message: str, quoted_message_id: str
-) -> str:
-    """Reply to a specific WhatsApp message, quoting the original.
-
-    Args:
-        phone: Phone number of the chat (e.g. '5511999998888').
-        message: Your reply text.
-        quoted_message_id: The ID of the message you want to reply to.
-    """
+async def whatsapp_reply_message(phone: str, message: str, quoted_message_id: str) -> str:
+    """Reply quoting a message. phone: no '+'. message: reply text. quoted_message_id: original msg ID."""
     result = await client.reply_message(phone, message, quoted_message_id)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_delete_message(
-    phone: str, message_id: str, everyone: bool = True, confirmed: bool = False
-) -> str:
-    """Delete a WhatsApp message.
-
-    ⚠️ DESTRUCTIVE: Always ask the user explicitly for confirmation before calling this.
-    Args:
-        phone: Phone number of the chat containing the message.
-        message_id: ID of the message to delete.
-        everyone: If True, deletes for everyone (revoke). If False, deletes only for you.
-        confirmed: Must be True to proceed. Never call with confirmed=True without explicit user approval.
-    """
+async def whatsapp_delete_message(phone: str, message_id: str, everyone: bool = True, confirmed: bool = False) -> str:
+    """Delete a message. ⚠️ DESTRUCTIVE. confirmed=True required — always ask user first. everyone: revoke for all."""
     if not confirmed:
         scope = "para todos" if everyone else "só para você"
         return (
@@ -695,41 +549,22 @@ async def whatsapp_delete_message(
 
 
 @mcp.tool()
-async def whatsapp_send_poll(
-    phone: str,
-    question: str,
-    options: list[str],
-    max_answers: int = 1,
-) -> str:
-    """Send a poll message on WhatsApp.
-
-    Args:
-        phone: Recipient phone number or group JID.
-        question: The poll question.
-        options: List of answer options (e.g. ['Yes', 'No', 'Maybe']).
-        max_answers: Maximum number of options a person can select (default: 1).
-    """
+async def whatsapp_send_poll(phone: str, question: str, options: list[str], max_answers: int = 1) -> str:
+    """Send poll. phone: no '+' or group JID. question: poll text. options: list of choices. max_answers: default 1."""
     result = await client.send_poll(phone, question, options, max_answers)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_unread_messages() -> str:
-    """Get all unread WhatsApp messages across all chats.
-    Use this to check what messages you haven't read yet."""
+    """Get all unread messages across all chats."""
     result = await client.get_unread_messages()
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_search_messages(query: str, limit: int = 50) -> str:
-    """Search for messages containing a specific keyword across all chats.
-    This is a global search that looks through all synchronized history.
-
-    Args:
-        query: The keyword or phrase to search for.
-        limit: Maximum number of results to return (default: 50).
-    """
+    """Search messages by keyword across all synced history. query: term. limit: default 50."""
     if not DB_PATH.exists():
         return (
             "⚠️ Database file not found. Ensure WuzAPI is running and you have "
@@ -765,13 +600,7 @@ async def whatsapp_search_messages(query: str, limit: int = 50) -> str:
 
 @mcp.tool()
 async def whatsapp_forward_message(message_id: str, to_phone: str) -> str:
-    """Forward an existing message to another phone number or group.
-    This works by locating the original message in your history and re-sending its content.
-
-    Args:
-        message_id: The unique ID of the message to forward.
-        to_phone: Recipient phone number or group JID (e.g. '5511999998888' or '120363... @g.us').
-    """
+    """Forward a message to another chat. message_id: original msg. to_phone: number or group JID."""
     if not DB_PATH.exists():
         return "⚠️ Database not found. Cannot locate original message for forwarding."
 
@@ -810,32 +639,21 @@ async def whatsapp_forward_message(message_id: str, to_phone: str) -> str:
 
 @mcp.tool()
 async def whatsapp_get_user_info(phone: str) -> str:
-    """Get WhatsApp info (display name, about, business info) for a specific phone number.
-
-    Args:
-        phone: Phone number to look up (e.g. '5511999998888'). Do NOT include '+' prefix.
-
-    Note: To check YOUR OWN session info (your number, connection status), use whatsapp_status instead.
-    """
+    """Get WhatsApp profile (name, about) for a number. phone: no '+'. For own session use whatsapp_status."""
     result = await client.get_user_info(phone)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_contacts() -> str:
-    """Get the full WhatsApp contacts list."""
+    """Get full WhatsApp contacts list."""
     result = await client.get_contacts()
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_search_contacts(query: str) -> str:
-    """Search contacts by name. Understands nicknames like 'amor', 'namorada',
-    'esposa', 'mãe', 'pai', etc. Returns matching contacts with their phone numbers.
-
-    Args:
-        query: Name or keyword to search for (e.g. 'amor', 'João', 'namorada').
-    """
+    """Search contacts by name or nickname (e.g. 'João', 'mãe', 'amor'). Returns matches with phone numbers."""
     result = await client.get_contacts()
     contacts_raw = result.get("data", {})
 
@@ -867,13 +685,7 @@ async def whatsapp_search_contacts(query: str) -> str:
 
 @mcp.tool()
 async def whatsapp_get_messages_by_contact_name(name: str, only_today: bool = True, limit: int = 20) -> str:
-    """Fetch messages from a contact using their name or nickname (e.g., 'Amor', 'Mãe').
-    
-    Args:
-        name: The name or nickname of the contact to search for.
-        only_today: If True, returns only messages from today (UTC).
-        limit: Max number of messages to return.
-    """
+    """Get messages from a contact by name/nickname. only_today: filter today only. limit: default 20."""
     # 1. Find the contact first
     search_result = await whatsapp_search_contacts(name)
     if "❌" in search_result:
@@ -935,22 +747,14 @@ async def whatsapp_get_messages_by_contact_name(name: str, only_today: bool = Tr
 
 @mcp.tool()
 async def whatsapp_check_phones(phones: list[str]) -> str:
-    """Check if phone numbers are registered on WhatsApp.
-
-    Args:
-        phones: List of phone numbers to check (with country code, no '+' prefix).
-    """
+    """Check if phone numbers are on WhatsApp. phones: list, country code, no '+'."""
     result = await client.check_phones(phones)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_avatar(phone: str) -> str:
-    """Get the profile picture URL for a WhatsApp user.
-
-    Args:
-        phone: Phone number to get the avatar for.
-    """
+    """Get profile picture URL for a number. phone: no '+'."""
     result = await client.get_avatar(phone)
     return _format_result(result)
 
@@ -962,56 +766,35 @@ async def whatsapp_get_avatar(phone: str) -> str:
 
 @mcp.tool()
 async def whatsapp_list_groups() -> str:
-    """List all WhatsApp groups the user is part of."""
+    """List all WhatsApp groups."""
     result = await client.list_groups()
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_group_info(group_jid: str) -> str:
-    """Get detailed information about a WhatsApp group.
-
-    Args:
-        group_jid: The JID (identifier) of the group.
-    """
+    """Get group details. group_jid: group identifier (e.g. 120363...@g.us)."""
     result = await client.get_group_info(group_jid)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_create_group(name: str, participants: list[str]) -> str:
-    """Create a new WhatsApp group.
-
-    Args:
-        name: Name of the group to create.
-        participants: List of phone numbers to add as participants.
-    """
+    """Create a WhatsApp group. name: group name. participants: list of phone numbers, no '+'."""
     result = await client.create_group(name, participants)
     return _format_result(result)
 
 
 @mcp.tool()
-async def whatsapp_update_group_participants(
-    group_jid: str, participants: list[str], action: str = "add"
-) -> str:
-    """Add or remove participants from a WhatsApp group.
-
-    Args:
-        group_jid: The JID (identifier) of the group.
-        participants: List of phone numbers to add/remove.
-        action: Either 'add' or 'remove' (default: 'add').
-    """
+async def whatsapp_update_group_participants(group_jid: str, participants: list[str], action: str = "add") -> str:
+    """Add or remove group participants. action: 'add'|'remove'. participants: phone list, no '+'."""
     result = await client.update_group_participants(group_jid, participants, action)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_get_group_invite_link(group_jid: str) -> str:
-    """Get the invite link for a WhatsApp group.
-
-    Args:
-        group_jid: The JID (identifier) of the group.
-    """
+    """Get invite link for a group. group_jid: group identifier."""
     result = await client.get_group_invite_link(group_jid)
     return _format_result(result)
 
@@ -1023,11 +806,7 @@ async def whatsapp_get_group_invite_link(group_jid: str) -> str:
 
 @mcp.tool()
 async def whatsapp_set_webhook(webhook_url: str) -> str:
-    """Configure the webhook URL to receive incoming WhatsApp messages and events.
-
-    Args:
-        webhook_url: The URL where WuzAPI will POST incoming events.
-    """
+    """Set webhook URL to receive incoming WhatsApp events (messages, receipts)."""
     result = await client.set_webhook(webhook_url)
     return _format_result(result)
 
@@ -1038,26 +817,15 @@ async def whatsapp_set_webhook(webhook_url: str) -> str:
 
 
 @mcp.tool()
-async def whatsapp_get_newsletter_messages(
-    newsletter_jid: str, count: int = 50
-) -> str:
-    """Get messages from a WhatsApp newsletter/channel.
-
-    Args:
-        newsletter_jid: The JID of the newsletter/channel.
-        count: Number of messages to retrieve (default: 50).
-    """
+async def whatsapp_get_newsletter_messages(newsletter_jid: str, count: int = 50) -> str:
+    """Get messages from a newsletter/channel. newsletter_jid: channel ID. count: default 50."""
     result = await client.get_newsletter_messages(newsletter_jid, count)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_subscribe_newsletter(newsletter_jid: str) -> str:
-    """Subscribe to a WhatsApp newsletter/channel.
-
-    Args:
-        newsletter_jid: The JID of the newsletter/channel to subscribe to.
-    """
+    """Subscribe to a WhatsApp newsletter/channel. newsletter_jid: channel ID."""
     result = await client.subscribe_newsletter(newsletter_jid)
     return _format_result(result)
 
@@ -1069,32 +837,21 @@ async def whatsapp_subscribe_newsletter(newsletter_jid: str) -> str:
 
 @mcp.tool()
 async def whatsapp_admin_list_users() -> str:
-    """List all WuzAPI users (requires admin token)."""
+    """List all WuzAPI users. Requires admin token."""
     result = await client.admin_list_users()
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_admin_create_user(name: str, token: str) -> str:
-    """Create a new WuzAPI user (requires admin token).
-
-    Args:
-        name: Username for the new user.
-        token: Authentication token for the new user.
-    """
+    """Create WuzAPI user. Requires admin token. name: username. token: auth token."""
     result = await client.admin_create_user(name, token)
     return _format_result(result)
 
 
 @mcp.tool()
 async def whatsapp_admin_delete_user(name: str, confirmed: bool = False) -> str:
-    """Delete a WuzAPI user (requires admin token).
-
-    ⚠️ DESTRUCTIVE: Always ask the user explicitly for confirmation before calling this.
-    Args:
-        name: Username to delete.
-        confirmed: Must be True to proceed. Never call with confirmed=True without explicit user approval.
-    """
+    """Delete WuzAPI user. ⚠️ DESTRUCTIVE. confirmed=True required — always ask user first."""
     if not confirmed:
         return (
             f"⚠️ Você tem certeza que quer DELETAR o usuário '{name}'?\n"
@@ -1107,8 +864,7 @@ async def whatsapp_admin_delete_user(name: str, confirmed: bool = False) -> str:
 
 @mcp.tool()
 async def whatsapp_admin_enable_history() -> str:
-    """Enable message history for the current WuzAPI user (requires admin token).
-    Run this once if whatsapp_get_messages returns 'history is disabled' error."""
+    """Enable message history for current user. Run if whatsapp_get_messages returns history disabled."""
     if not client.admin_token:
         return "❌ Admin token not configured. Run whatsapp_configure with admin_token first."
     try:
@@ -1136,18 +892,8 @@ async def whatsapp_admin_enable_history() -> str:
 
 
 @mcp.tool()
-async def whatsapp_configure(
-    token: str,
-    base_url: str = "http://localhost:7143",
-    admin_token: str = "",
-) -> str:
-    """Configure the WhatsApp MCP credentials. Run this once to set up your WuzAPI connection.
-
-    Args:
-        token: Your WuzAPI user token.
-        base_url: WuzAPI server URL (default: http://localhost:7143).
-        admin_token: WuzAPI admin token (optional, needed for admin tools).
-    """
+async def whatsapp_configure(token: str, base_url: str = "http://localhost:7143", admin_token: str = "") -> str:
+    """Save WuzAPI credentials. Run once to set up. token: user token. admin_token: optional, for admin tools."""
     lines = [
         f"WUZAPI_BASE_URL={base_url}",
         f"WUZAPI_TOKEN={token}",

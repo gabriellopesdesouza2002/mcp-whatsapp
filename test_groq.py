@@ -33,6 +33,7 @@ WUZAPI_BASE_URL   = os.getenv("WUZAPI_BASE_URL", "http://localhost:7143")
 WUZAPI_TOKEN      = os.getenv("WUZAPI_TOKEN", "")
 WUZAPI_ADMIN_TOKEN = os.getenv("WUZAPI_ADMIN_TOKEN", "")
 GROQ_API_KEY      = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL        = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 
 # Caminho do Python dentro do venv do projeto
 VENV_PYTHON = str(Path(__file__).parent / ".venv" / "Scripts" / "python.exe")
@@ -309,7 +310,7 @@ async def main():
     parser.add_argument("--test",  choices=["health","status","send","chats","contacts","groups","admin","all"], help="Teste específico para rodar")
     parser.add_argument("--phone", default="", help="Número de destino para --test send")
     parser.add_argument("--message", default="Olá! Mensagem de teste via MCP WhatsApp + Groq 🤖", help="Mensagem para --test send")
-    parser.add_argument("--model", default="llama-3.3-70b-versatile", help="Modelo Groq a usar")
+    parser.add_argument("--model", default=GROQ_MODEL, help="Modelo Groq a usar (padrão vem do .env GROQ_MODEL)")
     args = parser.parse_args()
 
     _check_requirements()

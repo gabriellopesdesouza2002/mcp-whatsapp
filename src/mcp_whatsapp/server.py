@@ -111,58 +111,49 @@ def _format_result(result: dict[str, Any]) -> str:
 
 
 async def _query_db(sql: str, params: tuple = (), limit: int = 50) -> list[Any]:
-    """Helper to query the SQLite database using a temporary shadow copy to avoid locking/corruption issues."""
+    """Query the SQLite DB via SQLite's built-in backup API (safe on Windows WAL locks)."""
     import time
-    import shutil
     import tempfile
-    
+
     retries = 3
     last_error = None
-    
-    # Create a temporary path for the database copy
     tmp_dir = tempfile.gettempdir()
-    base_name = f"mcp_whatsapp_shadow_{int(time.time())}"
-    tmp_path = os.path.join(tmp_dir, f"{base_name}.db")
-    tmp_wal = tmp_path + "-wal"
-    tmp_shm = tmp_path + "-shm"
-    
-    db_str = str(DB_PATH)
-        
+    tmp_path = os.path.join(tmp_dir, f"mcp_whatsapp_shadow_{int(time.time() * 1000)}.db")
+
     for i in range(retries):
+        backup_conn = None
+        src_conn = None
         try:
-            # Copy the active DB and its WAL/SHM files if they exist
-            shutil.copy2(db_str, tmp_path)
-            if os.path.exists(db_str + "-wal"):
-                shutil.copy2(db_str + "-wal", tmp_wal)
-            if os.path.exists(db_str + "-shm"):
-                shutil.copy2(db_str + "-shm", tmp_shm)
-            
-            # Query the copy
-            conn = sqlite3.connect(tmp_path, timeout=10)
-            cursor = conn.cursor()
+            # SQLite's .backup() handles WAL mode correctly without copying files manually
+            src_conn = sqlite3.connect(str(DB_PATH), timeout=5)
+            backup_conn = sqlite3.connect(tmp_path)
+            src_conn.backup(backup_conn)
+            src_conn.close()
+            src_conn = None
+
+            cursor = backup_conn.cursor()
             cursor.execute(sql, params)
             rows = cursor.fetchall()
-            conn.close()
-            
-            # Clean up and return
-            for f in [tmp_path, tmp_wal, tmp_shm]:
-                if os.path.exists(f):
-                    try: os.remove(f)
-                    except: pass
+            backup_conn.close()
+            backup_conn = None
             return rows
         except Exception as e:
             last_error = e
+            if src_conn:
+                try: src_conn.close()
+                except: pass
+            if backup_conn:
+                try: backup_conn.close()
+                except: pass
             if i < retries - 1:
                 time.sleep(0.5 * (i + 1))
-                continue
-            break
-    
-    # Final cleanup if failed
-    for f in [tmp_path, tmp_wal, tmp_shm]:
-        if os.path.exists(f):
-            try: os.remove(f)
-            except: pass
-            
+        finally:
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
+
     raise last_error if last_error else Exception("Unknown database error")
 
 
@@ -248,12 +239,28 @@ async def _lifespan(app):
 # MCP Server & WuzAPI Client
 # ──────────────────────────────────────────────
 
+_SERVER_START_TIME = datetime.now()
+
 mcp = FastMCP(
     "WhatsApp MCP",
     lifespan=_lifespan,
         instructions=(
+        f"Current date and time (server startup): {_SERVER_START_TIME.strftime('%Y-%m-%d %H:%M')} "
+        f"(timezone: America/Sao_Paulo, Brazil).\n"
+        "Always use this as today's reference date when calculating ages, deadlines or comparing timestamps. "
+        "Use whatsapp_get_datetime() to get a refreshed timestamp if the session has been running for a while.\n\n"
         "MCP server that provides WhatsApp messaging capabilities via WuzAPI. "
         "Use whatsapp_connect() first to start a session, then use messaging tools to send/receive messages.\n\n"
+        "--- STALE DATA GUARDRAIL (MANDATORY) ---\n"
+        "When ANY tool response contains a 'stale_warning' field, you MUST:\n"
+        "1. Show the user the most recent message date from stale_warning['most_recent_message']\n"
+        "2. Use the exact text from stale_warning['suggestion'] to offer a live fetch\n"
+        "3. If the user says yes/sim/pode/quero, call whatsapp_get_messages with the phone/JID "
+        "   BUT pass fetch_live=True concept: actually call client.get_messages() by NOT using "
+        "   the DB path — to do this, use whatsapp_force_sync first, then retry whatsapp_get_messages.\n"
+        "Example response when stale: 'Olha, os dados que tenho são do banco local e a última "
+        "mensagem é de [data]. Posso buscar diretamente do WhatsApp agora sem depender da "
+        "sincronização — deseja?'\n\n"
         "--- DELETION GUARDRAIL (MANDATORY) ---\n"
         "⚠️  NEVER call whatsapp_reset_session, whatsapp_delete_message, whatsapp_admin_delete_user, or whatsapp_disconnect "
         "without EXPLICITLY asking the user for confirmation first. Show what will be affected "
@@ -362,6 +369,19 @@ async def whatsapp_get_qrcode() -> list:
         )
     result = await client.get_qrcode()
     return _format_result(result)
+
+
+@mcp.tool()
+async def whatsapp_get_datetime() -> str:
+    """Get current date and time (Brazil/São Paulo). Use to know today's date before comparing message timestamps."""
+    now = datetime.now()
+    return json.dumps({
+        "now": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M"),
+        "weekday": now.strftime("%A"),
+        "timezone": "America/Sao_Paulo",
+    }, ensure_ascii=False)
 
 
 @mcp.tool()
@@ -587,8 +607,16 @@ async def whatsapp_get_messages(phone: str, count: int = 20) -> str:
 
         msgs.sort(key=lambda m: m["ts"])
         recent = msgs[-count:]
-        # Compact JSON — no indentation to save tokens
-        return json.dumps({"ok": True, "n": len(recent), "msgs": recent}, ensure_ascii=False)
+
+        result: dict[str, Any] = {"ok": True, "n": len(recent), "msgs": recent}
+
+        # Detectar se os dados estão velhos
+        most_recent_ts = recent[-1]["ts"] if recent else None
+        stale = _check_staleness(most_recent_ts)
+        if stale:
+            result["stale_warning"] = stale
+
+        return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         result = await client.get_messages(phone, count)
         return _format_result(result)
@@ -613,6 +641,22 @@ async def whatsapp_get_chats() -> str:
         if not rows:
             return json.dumps({"ok": True, "n": 0, "chats": []})
 
+        # Build contact name lookup from WuzAPI contacts
+        jid_to_name: dict[str, str] = {}
+        try:
+            contacts_result = await client.get_contacts()
+            contacts_raw = contacts_result.get("data", {})
+            if isinstance(contacts_raw, dict):
+                for c_jid, c in contacts_raw.items():
+                    name = (
+                        c.get("FullName") or c.get("PushName")
+                        or c.get("FirstName") or c.get("BusinessName") or ""
+                    )
+                    if name:
+                        jid_to_name[c_jid] = name
+        except Exception:
+            pass  # names are best-effort — chats still returned without them
+
         # Fetch last message text for each chat
         chats = []
         for (chat_jid, _) in rows:
@@ -631,9 +675,25 @@ async def whatsapp_get_chats() -> str:
                     last_ts = dj.get("Info", {}).get("Timestamp", msg_rows[0][1] or "")
                 except Exception:
                     pass
-            chats.append({"jid": chat_jid, "last_ts": last_ts, "last_msg": last_msg[:80]})
+            phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
+            name = jid_to_name.get(chat_jid, "")
+            chats.append({
+                "jid": chat_jid,
+                "phone": phone,
+                "name": name,
+                "last_ts": last_ts,
+                "last_msg": last_msg[:80],
+            })
 
-        return json.dumps({"ok": True, "n": len(chats), "chats": chats}, ensure_ascii=False)
+        result: dict[str, Any] = {"ok": True, "n": len(chats), "chats": chats}
+
+        # Detectar se os dados estão velhos
+        most_recent = max((c["last_ts"] for c in chats if c["last_ts"]), default=None)
+        stale = _check_staleness(most_recent)
+        if stale:
+            result["stale_warning"] = stale
+
+        return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return f"❌ Error listing chats: {e}"
 
@@ -671,22 +731,27 @@ async def whatsapp_get_unread_messages(limit: int = 20) -> str:
     if not DB_PATH.exists():
         return "⚠️ Database not found. Connect WhatsApp and sync history first."
     try:
-        # WuzAPI has no /chat/unread endpoint — we approximate by fetching recent incoming msgs
+        # WuzAPI has no /chat/unread endpoint — fetch recent rows and filter in Python
+        # (avoids json_extract which may not be available on older SQLite builds on Windows)
         sql = """
             SELECT chat_jid, datajson, timestamp
             FROM message_history
-            WHERE json_extract(datajson, '$.Info.FromMe') = 0
-               OR json_extract(datajson, '$.Info.FromMe') IS NULL
             ORDER BY id DESC
             LIMIT ?
         """
-        rows = await _query_db(sql, (limit,))
+        # Over-fetch so we have enough after filtering out our own messages
+        rows = await _query_db(sql, (limit * 6,))
         if not rows:
             return json.dumps({"ok": True, "n": 0, "messages": []})
         msgs = []
         for (chat_jid, datajson, ts) in rows:
+            if len(msgs) >= limit:
+                break
             try:
                 dj = json.loads(datajson or "{}")
+                # Use IsFromMe (correct WuzAPI key) — skip our own messages
+                if dj.get("Info", {}).get("IsFromMe", False):
+                    continue
                 text = (
                     dj.get("Message", {}).get("conversation")
                     or dj.get("Message", {}).get("extendedTextMessage", {}).get("text")
@@ -697,7 +762,15 @@ async def whatsapp_get_unread_messages(limit: int = 20) -> str:
                 msgs.append({"chat": chat_jid, "from": sender, "ts": timestamp, "text": text[:120]})
             except Exception:
                 continue
-        return json.dumps({"ok": True, "n": len(msgs), "messages": msgs}, ensure_ascii=False)
+        result: dict[str, Any] = {"ok": True, "n": len(msgs), "messages": msgs}
+
+        # Detectar se os dados estão velhos
+        most_recent_ts = msgs[0]["ts"] if msgs else None  # já ordenado DESC
+        stale = _check_staleness(most_recent_ts)
+        if stale:
+            result["stale_warning"] = stale
+
+        return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         return f"❌ Error fetching messages: {e}"
 
@@ -818,7 +891,12 @@ async def whatsapp_search_contacts(query: str) -> str:
             })
 
     if not matches:
-        return f"❌ No contacts found matching '{query}'."
+        return (
+            f"❌ No contacts found matching '{query}' in the phone book. "
+            "The person may be saved under a different name or may only exist as a WhatsApp push name. "
+            "Try calling whatsapp_get_chats() to browse recent conversations — it includes contact names "
+            "and you can identify the chat by name and send via the 'phone' field."
+        )
 
     return _format_result({"success": True, "count": len(matches), "data": matches})
 
@@ -1076,13 +1154,8 @@ async def whatsapp_configure(token: str, base_url: str = "http://localhost:7143"
     )
 
 
-# ──────────────────────────────────────────────
-# Entry Point
-# ──────────────────────────────────────────────
-
-
-def main():
-    """Run the MCP server with stdio transport."""
+def main() -> None:
+    """Entry point for the mcp-whatsapp CLI and Claude Desktop."""
     mcp.run(transport="stdio")
 
 

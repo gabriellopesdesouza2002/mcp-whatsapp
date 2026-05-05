@@ -855,6 +855,14 @@ async def whatsapp_search_contacts(query: str) -> str:
     result = await client.get_contacts()
     contacts_raw = result.get("data", {})
 
+    # Diagnose what the contacts endpoint actually returned
+    contacts_count = len(contacts_raw) if isinstance(contacts_raw, dict) else 0
+    contacts_status = (
+        f"phone_book_contacts={contacts_count}"
+        if contacts_count > 0
+        else f"phone_book_empty (raw={str(result)[:120]})"
+    )
+
     q = query.lower().strip()
     matches = []
 
@@ -874,56 +882,50 @@ async def whatsapp_search_contacts(query: str) -> str:
                 })
 
     if matches:
-        return _format_result({"success": True, "count": len(matches), "data": matches})
+        return _format_result({"success": True, "count": len(matches), "data": matches, "source": "phone_book"})
 
-    # Fallback: pull unique DM chats from history, resolve names via WuzAPI, then search
+    # Fallback: extract push names from datajson in local SQLite (no extra API calls)
     if not DB_PATH.exists():
         return f"❌ '{query}' not found in contacts and message history is unavailable."
 
     try:
         sql = """
-            SELECT chat_jid, text_content, timestamp
+            SELECT chat_jid, datajson, text_content, timestamp
             FROM message_history
             WHERE chat_jid NOT LIKE '%@g.us'
             ORDER BY id DESC
-            LIMIT 800
+            LIMIT 1000
         """
         rows = await _query_db(sql)
+
+        # Build one entry per unique DM JID, extracting push name from incoming messages
         seen: dict[str, dict] = {}
-        for (chat_jid, text, ts) in rows:
+        for (chat_jid, datajson_raw, text, ts) in rows:
+            phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
             if chat_jid not in seen:
-                phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
                 seen[chat_jid] = {
                     "phone": phone,
-                    "jid": chat_jid,
                     "name": "",
-                    "last_msg": (text or "")[:80],
+                    "last_message_preview": (text or "")[:60],
                     "last_ts": (ts or "")[:10],
                 }
+            # Fill name from the first incoming message we find for this JID
+            if not seen[chat_jid]["name"] and datajson_raw:
+                try:
+                    dj = json.loads(datajson_raw)
+                    info = dj.get("Info", {})
+                    # Only use push name from incoming messages
+                    if not info.get("IsFromMe", False):
+                        push = info.get("PushName") or dj.get("SenderName") or ""
+                        if push:
+                            seen[chat_jid]["name"] = push
+                except Exception:
+                    pass
 
-        # Resolve names via WuzAPI /user/info for phone-number JIDs (not @lid)
-        name_matches = []
-        all_resolved = []
-        for entry in list(seen.values())[:60]:
-            phone = entry["phone"]
-            # Skip LID-format JIDs — they have no usable phone number
-            if not phone.isdigit():
-                all_resolved.append(entry)
-                continue
-            try:
-                info = await client.get_user_info(phone)
-                data = info.get("data", {})
-                # WuzAPI returns a dict keyed by JID
-                for _jid, udata in (data.items() if isinstance(data, dict) else []):
-                    wname = udata.get("VerifiedName") or udata.get("PushName") or udata.get("Name") or ""
-                    entry["name"] = wname
-                    break
-            except Exception:
-                pass
-            all_resolved.append(entry)
-            # Check if this entry matches the query
-            if q in entry["name"].lower() or q in phone:
-                name_matches.append(entry)
+        name_matches = [
+            e for e in seen.values()
+            if q in e["name"].lower() or q in e["phone"]
+        ]
 
         if name_matches:
             return json.dumps({
@@ -932,15 +934,18 @@ async def whatsapp_search_contacts(query: str) -> str:
                 "data": name_matches,
             }, ensure_ascii=False)
 
-        # Still not found — return resolved list so agent/user can identify
+        # Still not found — return list with names so user can identify
+        displayable = [e for e in seen.values() if e["name"] or e["phone"].isdigit()][:30]
         return json.dumps({
             "found": False,
+            "contacts_endpoint": contacts_status,
             "message": (
-                f"'{query}' not found in contacts or resolved names. "
-                "Showing recent conversations with names (where available). "
-                "Ask the user to identify the correct number."
+                f"'{query}' não encontrado nos contatos nem no histórico de conversas. "
+                "Exibindo conversas recentes com nome e telefone para identificação. "
+                "Se nenhum corresponder, pergunte ao usuário: "
+                f"'Não encontrei '{query}' em nenhuma conversa ou contato. Você sabe o número de telefone dele(a)?'"
             ),
-            "recent_chats": [e for e in all_resolved if e["name"] or e["last_msg"]][:30],
+            "recent_chats": displayable,
         }, ensure_ascii=False)
     except Exception as e:
         return f"❌ '{query}' not found in contacts. History fallback failed: {e}"

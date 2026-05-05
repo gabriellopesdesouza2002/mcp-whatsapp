@@ -432,46 +432,87 @@ async def whatsapp_force_sync() -> str:
 
 @mcp.tool()
 async def whatsapp_reset_session(confirmed: bool = False) -> str:
-    """Reset WhatsApp session completely — logout + delete session files + fresh QR. ⚠️ DESTRUCTIVE. confirmed=True required."""
+    """Reset WhatsApp session completely — logout + wipe message history + clear media + fresh QR. ⚠️ DESTRUCTIVE. confirmed=True required."""
     if not confirmed:
         return (
-            "⚠️ Isso vai DESCONECTAR e APAGAR sua sessão do WhatsApp completamente.\n"
-            "Você precisará escanear o QR code novamente para reconectar.\n"
+            "⚠️ Isso vai DESCONECTAR e APAGAR tudo da sua sessão WhatsApp:\n"
+            "  • Sessão ativa (você sairá do WhatsApp)\n"
+            "  • Todo o histórico de mensagens salvo localmente\n"
+            "  • Arquivos de mídia temporários\n"
+            "  • Usuário WuzAPI (recriado automaticamente)\n\n"
+            "Você precisará escanear o QR code novamente para conectar um número.\n"
             "Para confirmar, chame novamente com confirmed=True."
         )
 
-    # 1. Disconnect — ends active session (clears WuzAPI state)
-    logout_result = await client.disconnect()
+    steps: list[str] = []
 
-    # 2. If admin, delete and recreate user for clean state
-    cleanup_note = ""
+    # 1. Disconnect — ends active WhatsApp session
+    try:
+        await client.disconnect()
+        steps.append("✅ Sessão WhatsApp encerrada")
+    except Exception as e:
+        steps.append(f"⚠️ Disconnect: {e}")
+
+    # 2. Wipe local message history (LGPD compliance)
+    if DB_PATH.exists():
+        try:
+            def _wipe_db():
+                conn = sqlite3.connect(str(DB_PATH), timeout=10)
+                conn.execute("DELETE FROM message_history")
+                conn.commit()
+                conn.close()
+
+            await asyncio.get_event_loop().run_in_executor(None, _wipe_db)
+            steps.append("✅ Histórico de mensagens apagado (LGPD)")
+        except Exception as e:
+            steps.append(f"⚠️ Limpeza do banco: {e}")
+    else:
+        steps.append("ℹ️ Banco de dados não encontrado (já limpo)")
+
+    # 3. Clear temp media files
+    temp_dir = Path(__file__).parent.parent.parent / "temp_media"
+    if temp_dir.exists():
+        try:
+            removed = 0
+            for f in temp_dir.iterdir():
+                if f.is_file():
+                    f.unlink()
+                    removed += 1
+            steps.append(f"✅ {removed} arquivo(s) de mídia removido(s)")
+        except Exception as e:
+            steps.append(f"⚠️ Limpeza de mídia: {e}")
+
+    # 4. Delete and recreate WuzAPI user for clean state
     if client.admin_token:
         try:
             await client.admin_delete_user("mcp_whatsapp_user")
             await asyncio.sleep(1)
             await client.ensure_user_exists()
-            cleanup_note = "\n  🗑️ Usuário WuzAPI recriado."
+            steps.append("✅ Usuário WuzAPI recriado")
         except Exception as e:
-            cleanup_note = f"\n  ⚠️ Limpeza do usuário: {e}"
+            steps.append(f"⚠️ Recriação do usuário: {e}")
 
-    # 3. Wait for WuzAPI to be ready
+    # 5. Wait for WuzAPI to be ready, then connect for QR
     await asyncio.sleep(2)
+    try:
+        await client.connect()
+    except Exception:
+        pass
 
-    # 4. Connect — triggers new QR code generation
-    connect_result = await client.connect()
+    report = "\n".join(f"  {s}" for s in steps)
 
-    # 5. Show QR code
+    # 6. Show new QR code
     image_bytes = await client.get_qrcode_image()
     if image_bytes:
         url = _save_qr_and_url(image_bytes)
         return (
-            "🔄 Sessão apagada completamente! Escaneie o novo QR code:\n"
+            f"Limpeza concluída:\n{report}\n\n"
+            "Escaneie o QR code para conectar um novo número:\n"
             "WhatsApp → ⋮ → Dispositivos conectados → Conectar dispositivo\n\n"
             f"![QR Code]({url})"
-            f"{cleanup_note}"
         )
 
-    return _format_result({"logout": logout_result, "connect": connect_result, "note": cleanup_note})
+    return f"Limpeza concluída:\n{report}\n\nUse whatsapp_get_qrcode para escanear o QR code."
 
 # ══════════════════════════════════════════════
 # MESSAGING TOOLS
@@ -874,7 +915,11 @@ async def whatsapp_search_contacts(query: str) -> str:
             business_name = contact.get("BusinessName") or ""
             all_names = f"{full_name} {push_name} {first_name} {business_name}".lower()
             if q in all_names:
-                phone = jid.split("@")[0] if "@" in jid else jid
+                # @lid JIDs have no real phone number — use full JID directly
+                if jid.endswith("@lid") or jid.endswith("@bot"):
+                    phone = jid
+                else:
+                    phone = jid.split("@")[0] if "@" in jid else jid
                 matches.append({
                     "name": full_name or push_name or first_name or business_name,
                     "phone": phone,
@@ -901,7 +946,11 @@ async def whatsapp_search_contacts(query: str) -> str:
         # Build one entry per unique DM JID, extracting push name from incoming messages
         seen: dict[str, dict] = {}
         for (chat_jid, datajson_raw, text, ts) in rows:
-            phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
+            # @lid/@bot JIDs have no real phone number — use full JID directly
+            if chat_jid.endswith("@lid") or chat_jid.endswith("@bot"):
+                phone = chat_jid
+            else:
+                phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
             if chat_jid not in seen:
                 seen[chat_jid] = {
                     "phone": phone,
@@ -935,7 +984,7 @@ async def whatsapp_search_contacts(query: str) -> str:
             }, ensure_ascii=False)
 
         # Still not found — return list with names so user can identify
-        displayable = [e for e in seen.values() if e["name"] or e["phone"].isdigit()][:30]
+        displayable = [e for e in seen.values() if e["name"] or e["phone"].split("@")[0].isdigit()][:30]
         return json.dumps({
             "found": False,
             "contacts_endpoint": contacts_status,

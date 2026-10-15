@@ -11,9 +11,10 @@ services:
       - WUZAPI_GLOBAL_ENCRYPTION_KEY=${WUZAPI_GLOBAL_ENCRYPTION_KEY:?Set a persistent 32-character key in .env}
       - WUZAPI_GLOBAL_HMAC_KEY=${WUZAPI_GLOBAL_HMAC_KEY:?Set a persistent HMAC key in .env}
       - WUZAPI_HISTORY=true
-      - LOG_LEVEL=${LOG_LEVEL:-warn}
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3
+    logging:
+      driver: "none"

@@ -41,12 +41,11 @@ WUZAPI_HISTORY_SYNC = os.getenv("WUZAPI_HISTORY_SYNC", "true").lower() == "true"
 AUDIT_LOG_FILE = Path(__file__).parent.parent.parent / "logs" / "audit_privacy.log"
 if os.getenv("MCP_WHATSAPP_READER") != "1":
     AUDIT_LOG_FILE.parent.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    filename=str(AUDIT_LOG_FILE),
-    level=logging.INFO,
-    format='%(asctime)s | %(levelname)s | %(message)s'
-)
+    logging.basicConfig(
+        filename=str(AUDIT_LOG_FILE),
+        level=logging.INFO,
+        format='%(asctime)s | %(levelname)s | %(message)s'
+    )
 
 class PrivacyGuard:
     """Utility to ensure LGPD/GDPR compliance by masking PII and logging activities."""

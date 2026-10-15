@@ -14,7 +14,7 @@ import re
 import sqlite3
 import sys
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -78,25 +78,55 @@ class PrivacyGuard:
         safe_params = {k: (v if k not in ["message", "text", "body", "query"] else "[CONTENT]") for k, v in params.items()}
         logging.info(f"Tool: {tool_name} | Params: {json.dumps(safe_params)}")
 
+def _parse_message_timestamp(value: str | None) -> datetime | None:
+    """Parse ISO or Go-formatted WuzAPI timestamps into comparable UTC datetimes."""
+    if not value:
+        return None
+    try:
+        # WuzAPI stores Go timestamps such as "2026-10-15 15:46:50.834598126 -0300 -03 m=+...".
+        # Drop Go's monotonic/zone-name suffix, normalize the numeric offset, and trim
+        # nanoseconds to Python datetime's microsecond precision.
+        timestamp = value.split(" m=", 1)[0].strip()
+        go_timestamp = re.match(
+            r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2})(?:\.(\d+))? ([+-]\d{4}|Z)(?:\s+\S+)?$",
+            timestamp,
+        )
+        if go_timestamp:
+            date_part, time_part, fraction, offset = go_timestamp.groups()
+            if offset != "Z":
+                offset = f"{offset[:3]}:{offset[3:]}"
+            timestamp = f"{date_part}T{time_part}"
+            if fraction:
+                timestamp += f".{fraction[:6]}"
+            timestamp += "+00:00" if offset == "Z" else offset
+        msg_dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        if msg_dt.tzinfo is None:
+            msg_dt = msg_dt.replace(tzinfo=timezone.utc)
+        return msg_dt.astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None
+
+
 def _check_staleness(most_recent_ts: str | None) -> dict[str, Any] | None:
-    """Return a stale_warning dict if most_recent_ts is older than 12 hours, else None."""
+    """Flag an old last-message timestamp; this is not a synchronization heartbeat."""
     if not most_recent_ts:
         return None
     try:
-        # Handle ISO format: "2025-03-18T14:30:00" or "2025-03-18 14:30:00" or date-only
-        ts_clean = most_recent_ts[:19].replace("T", " ")
-        msg_dt = datetime.strptime(ts_clean, "%Y-%m-%d %H:%M:%S")
-        age_hours = (datetime.now() - msg_dt).total_seconds() / 3600
+        msg_dt = _parse_message_timestamp(most_recent_ts)
+        if msg_dt is None:
+            return None
+        age_hours = (datetime.now(timezone.utc) - msg_dt).total_seconds() / 3600
         if age_hours > 12:
             age_str = f"{int(age_hours // 24)} dias" if age_hours >= 24 else f"{int(age_hours)} horas"
             return {
                 "stale": True,
                 "most_recent_message": most_recent_ts[:10],
                 "age": age_str,
+                "basis": "last_message_timestamp_not_sync_heartbeat",
                 "suggestion": (
-                    f"Os dados do banco local têm {age_str} de atraso "
-                    f"(última mensagem: {most_recent_ts[:10]}). "
-                    "Posso buscar diretamente do WhatsApp agora sem depender da sincronização — deseja?"
+                    f"Os resultados consultados não mostram mensagens posteriores a {most_recent_ts[:10]} "
+                    f"(mensagem mais recente há {age_str}). Esse indicador usa o horário da mensagem; "
+                    "não comprova atraso de sincronização nem que o histórico esteja completo."
                 ),
             }
     except Exception:
@@ -140,11 +170,15 @@ async def _query_db(sql: str, params: tuple = (), limit: int = 50) -> list[Any]:
         except Exception as e:
             last_error = e
             if src_conn:
-                try: src_conn.close()
-                except: pass
+                try:
+                    src_conn.close()
+                except sqlite3.Error:
+                    pass
             if backup_conn:
-                try: backup_conn.close()
-                except: pass
+                try:
+                    backup_conn.close()
+                except sqlite3.Error:
+                    pass
             if i < retries - 1:
                 time.sleep(0.5 * (i + 1))
         finally:
@@ -261,13 +295,10 @@ mcp = FastMCP(
         "--- STALE DATA GUARDRAIL (MANDATORY) ---\n"
         "When ANY tool response contains a 'stale_warning' field, you MUST:\n"
         "1. Show the user the most recent message date from stale_warning['most_recent_message']\n"
-        "2. Use the exact text from stale_warning['suggestion'] to offer a live fetch\n"
-        "3. If the user says yes/sim/pode/quero, call whatsapp_get_messages with the phone/JID "
-        "   BUT pass fetch_live=True concept: actually call client.get_messages() by NOT using "
-        "   the DB path — to do this, use whatsapp_force_sync first, then retry whatsapp_get_messages.\n"
-        "Example response when stale: 'Olha, os dados que tenho são do banco local e a última "
-        "mensagem é de [data]. Posso buscar diretamente do WhatsApp agora sem depender da "
-        "sincronização — deseja?'\n\n"
+        "2. Explain that this flag is based only on the latest message timestamp, not a sync heartbeat; "
+        "it cannot distinguish an inactive chat from delayed or incomplete synchronization.\n"
+        "3. Never claim history completeness. If the user requests a forced synchronization, explain "
+        "that whatsapp_force_sync reconnects the session and can interrupt it, then get consent before calling it.\n\n"
         "--- DELETION GUARDRAIL (MANDATORY) ---\n"
         "⚠️  NEVER call whatsapp_reset_session, whatsapp_delete_message, whatsapp_admin_delete_user, or whatsapp_disconnect "
         "without EXPLICITLY asking the user for confirmation first. Show what will be affected "
@@ -651,7 +682,7 @@ async def whatsapp_get_messages(phone: str, count: int = 20) -> str:
             result["stale_warning"] = stale
 
         return json.dumps(result, ensure_ascii=False)
-    except Exception as e:
+    except Exception:
         result = await client.get_messages(phone, count)
         return _format_result(result)
 
@@ -663,17 +694,40 @@ async def whatsapp_get_chats() -> str:
         return "⚠️ Database not found. Connect WhatsApp and sync history first."
 
     try:
-        sql = """
-            SELECT chat_jid, MAX(id) as last_id
-            FROM message_history
-            GROUP BY chat_jid
-            ORDER BY last_id DESC
-            LIMIT 100
-        """
-        rows = await _query_db(sql)
+        # WuzAPI may insert historical backfill rows after newer messages. Row ID and
+        # the DB timestamp are ingestion order/time, not the message's actual time.
+        # Select the latest event timestamp per chat before applying the 100-chat cap.
+        rows = await _query_db(
+            "SELECT chat_jid, datajson, timestamp FROM message_history"
+        )
 
         if not rows:
             return json.dumps({"ok": True, "n": 0, "chats": []})
+
+        latest_by_chat: dict[str, tuple[datetime, str, str]] = {}
+        for chat_jid, datajson, db_ts in rows:
+            try:
+                data = json.loads(datajson or "{}")
+                info = data.get("Info", {})
+                event_ts = info.get("Timestamp") or db_ts or ""
+                parsed_ts = _parse_message_timestamp(event_ts)
+                if parsed_ts is None:
+                    continue
+                previous = latest_by_chat.get(chat_jid)
+                if previous is None or parsed_ts > previous[0]:
+                    message = data.get("Message", {})
+                    preview = (
+                        message.get("conversation")
+                        or message.get("extendedTextMessage", {}).get("text")
+                        or f"[{info.get('Type', 'media')}]"
+                    )
+                    latest_by_chat[chat_jid] = (parsed_ts, event_ts, preview[:80])
+            except (TypeError, ValueError, AttributeError):
+                continue
+
+        latest_chats = sorted(
+            latest_by_chat.items(), key=lambda item: item[1][0], reverse=True
+        )[:100]
 
         # Build contact name lookup from WuzAPI contacts
         jid_to_name: dict[str, str] = {}
@@ -693,22 +747,7 @@ async def whatsapp_get_chats() -> str:
 
         # Fetch last message text for each chat
         chats = []
-        for (chat_jid, _) in rows:
-            msg_sql = "SELECT datajson, timestamp FROM message_history WHERE chat_jid = ? ORDER BY id DESC LIMIT 1"
-            msg_rows = await _query_db(msg_sql, (chat_jid,))
-            last_msg = ""
-            last_ts = ""
-            if msg_rows:
-                try:
-                    dj = json.loads(msg_rows[0][0] or "{}")
-                    last_msg = (
-                        dj.get("Message", {}).get("conversation")
-                        or dj.get("Message", {}).get("extendedTextMessage", {}).get("text")
-                        or f"[{dj.get('Info', {}).get('Type', 'media')}]"
-                    )
-                    last_ts = dj.get("Info", {}).get("Timestamp", msg_rows[0][1] or "")
-                except Exception:
-                    pass
+        for chat_jid, (_, last_ts, last_msg) in latest_chats:
             phone = chat_jid.split("@")[0] if "@" in chat_jid else chat_jid
             name = jid_to_name.get(chat_jid, "")
             chats.append({

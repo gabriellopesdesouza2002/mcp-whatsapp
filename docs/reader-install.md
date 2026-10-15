@@ -13,13 +13,13 @@ git clone https://github.com/gabriellopesdesouza2002/mcp-whatsapp.git
 cd mcp-whatsapp
 ```
 
-Create `.env` from `.env.example` (`Copy-Item .env.example .env` in PowerShell; `cp .env.example .env` on macOS/Linux). Replace both token placeholders with separate, random values generated locally. Keep `.env` private and do not paste tokens into chat. Start WuzAPI:
+Create `.env` from `.env.example` (`Copy-Item .env.example .env` in PowerShell; `cp .env.example .env` on macOS/Linux). Set separate random values for both API tokens, a **32-character** `WUZAPI_GLOBAL_ENCRYPTION_KEY`, and a `WUZAPI_GLOBAL_HMAC_KEY` of at least 32 characters. Generate tokens/HMAC locally with `python -c "import secrets; print(secrets.token_urlsafe(32))"` and the exact-length encryption key with `python -c "import secrets; print(secrets.token_hex(16))"`. The encryption/HMAC keys must persist across restarts or stored WuzAPI data may become unreadable. Keep `.env` private and do not paste tokens into chat. Start WuzAPI:
 
 ```sh
 docker compose up -d
 ```
 
-The WuzAPI HTTP port is bound to loopback only. Do not expose it to the internet.
+The WuzAPI HTTP port is bound to loopback only. Compose pins WuzAPI 1.0.9 and suppresses debug logs to avoid writing authentication tokens to the container log. Do not expose it to the internet.
 
 ## Install and pair
 

@@ -1,6 +1,6 @@
 services:
   wuzapi:
-    image: asternic/wuzapi:latest
+    image: asternic/wuzapi:1.0.9
     restart: unless-stopped
     ports:
       - "127.0.0.1:7143:8080"
@@ -8,9 +8,12 @@ services:
       - ./wuzapi_data:/app/dbdata
     environment:
       - WUZAPI_ADMIN_TOKEN=${WUZAPI_ADMIN_TOKEN:?Set a strong WUZAPI_ADMIN_TOKEN in .env}
+      - WUZAPI_GLOBAL_ENCRYPTION_KEY=${WUZAPI_GLOBAL_ENCRYPTION_KEY:?Set a persistent 32-character key in .env}
+      - WUZAPI_GLOBAL_HMAC_KEY=${WUZAPI_GLOBAL_HMAC_KEY:?Set a persistent HMAC key in .env}
       - WUZAPI_HISTORY=true
+      - LOG_LEVEL=${LOG_LEVEL:-warn}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3

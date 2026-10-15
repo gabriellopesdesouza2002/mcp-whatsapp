@@ -1,4 +1,6 @@
 .env
+.mcp.json
+skills/whatsapp-reader/
 *.log
 logs/
 .venv/

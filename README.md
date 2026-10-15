@@ -33,20 +33,37 @@ Just talk to your AI naturally:
 
 ---
 
+## WhatsApp Reader (read-only)
+
+This repository includes the open-source `mcp-whatsapp-reader` entry, which registers query-only tools separately from the full MCP. It does not include or expose the commercial WhatsApp Reader skill workflows; those are distributed in the Agensi ZIP.
+
+```bash
+python -m pip install -e .
+mcp-whatsapp-reader
+```
+
+The Reader does not expose pairing, sending, deletion, session changes, or administration. Pair and synchronize using a separately controlled setup process before connecting the Reader. The WuzAPI user token itself is not inherently read-only. See [`docs/reader-install.md`](docs/reader-install.md) for local setup.
+
+The creator's local package builder (`python scripts/package_whatsapp_reader.py`) reads the private, Git-ignored skill source and writes `dist/whatsapp-reader.zip`; neither source nor ZIP is part of the public Git history.
+
+---
+
 ## 🚀 Quick Start (3 steps)
 
 ### Step 1 — Clone and start WuzAPI
 
 ```bash
-git clone https://github.com/YOUR_USER/mcp-whatsapp
+git clone https://github.com/gabriellopesdesouza2002/mcp-whatsapp.git
 cd mcp-whatsapp
+# PowerShell: Copy-Item .env.example .env
+# macOS/Linux: cp .env.example .env
+# Edit .env and set unique random WUZAPI_ADMIN_TOKEN and WUZAPI_TOKEN values
 docker compose up -d
 ```
 
-That's it — WuzAPI starts automatically on `http://localhost:7143` with message history enabled. ✅
+WuzAPI listens on `127.0.0.1:7143` with message history enabled. The compose file requires a configured admin token and has no insecure default.
 
-> The included `docker-compose.yml` sets everything up for you.  
-> Default admin token: `admin123` (change via `WUZAPI_ADMIN_TOKEN` env var).
+> Keep `.env` private. Never expose the WuzAPI port publicly or commit tokens.
 
 ### Step 2 — Install the MCP server
 
@@ -85,7 +102,7 @@ Restart Claude, then just ask:
 If you prefer to use the dashboard, it is available at `http://localhost:7143`.
 
 1. Open `http://localhost:7143` → click **Admin Mode**
-2. Enter the admin token — default is `admin123`
+2. Enter the `WUZAPI_ADMIN_TOKEN` value from your private `.env`
 3. Go to **Users → Create User**, enter any name and choose a token.
 
 > *"Configure my WhatsApp with token **myusertoken**"*

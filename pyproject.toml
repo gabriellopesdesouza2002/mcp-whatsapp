@@ -16,6 +16,8 @@ dependencies = [
 # Instala tudo para rodar o test_mcp.py:
 #   pip install -e ".[test]"
 test = [
+    "pytest>=8.0.0",
+    "pyyaml>=6.0.0",
     "mcp-use>=1.7.0",
     "langchain-groq>=0.3.0",
     "langchain-openai>=0.3.0",
@@ -23,6 +25,7 @@ test = [
 
 [project.scripts]
 mcp-whatsapp = "mcp_whatsapp.server:main"
+mcp-whatsapp-reader = "mcp_whatsapp.reader_server:main"
 
 [build-system]
 requires = ["hatchling"]

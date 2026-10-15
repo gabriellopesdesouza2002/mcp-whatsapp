@@ -4,11 +4,11 @@ services:
     container_name: mcp-whatsapp-wuzapi
     restart: unless-stopped
     ports:
-      - "7143:8080"
+      - "127.0.0.1:7143:8080"
     volumes:
       - ./wuzapi_data:/app/dbdata
     environment:
-      - WUZAPI_ADMIN_TOKEN=${WUZAPI_ADMIN_TOKEN:-admin123}
+      - WUZAPI_ADMIN_TOKEN=${WUZAPI_ADMIN_TOKEN:?Set a strong WUZAPI_ADMIN_TOKEN in .env}
       - WUZAPI_HISTORY=true
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]

@@ -1,7 +1,6 @@
 services:
   wuzapi:
     image: asternic/wuzapi:latest
-    container_name: mcp-whatsapp-wuzapi
     restart: unless-stopped
     ports:
       - "127.0.0.1:7143:8080"

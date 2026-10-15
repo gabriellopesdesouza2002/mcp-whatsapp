@@ -2,7 +2,7 @@ import asyncio
 import json
 import zipfile
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import yaml
@@ -87,6 +87,50 @@ def test_empty_search_and_stale_warning_are_preserved(monkeypatch):
     assert '"stale": true' in asyncio.run(reader.whatsapp_get_chats())
 
 
+def test_staleness_warns_on_message_age_without_claiming_sync_delay():
+    old_utc = (datetime.now(timezone.utc) - timedelta(hours=13)).isoformat()
+    warning = core._check_staleness(old_utc)
+    assert warning["stale"] is True
+    assert warning["basis"] == "last_message_timestamp_not_sync_heartbeat"
+    assert "não comprova atraso de sincronização" in warning["suggestion"]
+
+    date_only = (datetime.now().date() - timedelta(days=1)).isoformat()
+    assert core._check_staleness(date_only)["stale"] is True
+
+    go_timestamp = (datetime.now(timezone.utc) - timedelta(hours=13)).strftime(
+        "%Y-%m-%d %H:%M:%S.%f +0000 UTC m=+845.068767435"
+    )
+    assert core._check_staleness(go_timestamp)["stale"] is True
+
+
+def test_chat_list_uses_message_time_not_backfill_insertion_order(monkeypatch, tmp_path):
+    monkeypatch.setattr(core, "DB_PATH", tmp_path / "history.db")
+    (tmp_path / "history.db").touch()
+    monkeypatch.setattr(core, "WUZAPI_PRIVACY_MODE", False)
+    recent = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    old = (datetime.now(timezone.utc) - timedelta(days=70)).isoformat()
+    rows = [
+        ("123@s.whatsapp.net", json.dumps({"Info": {"Timestamp": old, "Type": "text"},
+                                             "Message": {"conversation": "late backfill"}}), recent),
+        ("123@s.whatsapp.net", json.dumps({"Info": {"Timestamp": recent, "Type": "text"},
+                                             "Message": {"conversation": "actual latest"}}), old),
+    ]
+
+    async def query(sql, params=(), limit=50):
+        assert "SELECT chat_jid, datajson, timestamp" in sql
+        return rows
+
+    async def contacts():
+        return {"data": {}}
+
+    monkeypatch.setattr(core, "_query_db", query)
+    monkeypatch.setattr(core.client, "get_contacts", contacts)
+    result = json.loads(asyncio.run(core.whatsapp_get_chats()))
+    assert result["chats"][0]["last_ts"] == recent
+    assert result["chats"][0]["last_msg"] == "actual latest"
+    assert "stale_warning" not in result
+
+
 def test_contact_name_fallback_preserves_jid_and_can_query(monkeypatch):
     contacts = {"1234567890@s.whatsapp.net": {"PushName": "Test Contact"}}
     async def get_contacts():
@@ -123,6 +167,7 @@ def test_skill_frontmatter_and_package_validation(tmp_path, monkeypatch):
     metadata = yaml.safe_load(frontmatter)
     assert metadata["name"] == "whatsapp-reader"
     assert isinstance(metadata["description"], str) and metadata["description"]
+    assert "not a sync heartbeat" in content
 
     from scripts import package_whatsapp_reader as packager
     monkeypatch.setattr(packager, "OUTPUT", tmp_path / "whatsapp-reader.zip")

@@ -39,7 +39,8 @@ WUZAPI_HISTORY_SYNC = os.getenv("WUZAPI_HISTORY_SYNC", "true").lower() == "true"
 
 # Audit Logging setup
 AUDIT_LOG_FILE = Path(__file__).parent.parent.parent / "logs" / "audit_privacy.log"
-AUDIT_LOG_FILE.parent.mkdir(exist_ok=True)
+if os.getenv("MCP_WHATSAPP_READER") != "1":
+    AUDIT_LOG_FILE.parent.mkdir(exist_ok=True)
 
 logging.basicConfig(
     filename=str(AUDIT_LOG_FILE),
@@ -167,7 +168,8 @@ DB_PATH = Path(__file__).parent.parent.parent / "wuzapi_data" / "users.db"
 # ──────────────────────────────────────────────
 
 MEDIA_DIR = Path(__file__).parent.parent.parent / "temp_media"
-MEDIA_DIR.mkdir(exist_ok=True)
+if os.getenv("MCP_WHATSAPP_READER") != "1":
+    MEDIA_DIR.mkdir(exist_ok=True)
 MEDIA_PORT = int(os.getenv("WUZAPI_MEDIA_PORT", "7144"))
 
 
@@ -188,8 +190,9 @@ def _start_media_server() -> None:
         pass  # Port already in use — another instance is running
 
 
-_media_thread = threading.Thread(target=_start_media_server, daemon=True)
-_media_thread.start()
+if os.getenv("MCP_WHATSAPP_READER") != "1":
+    _media_thread = threading.Thread(target=_start_media_server, daemon=True)
+    _media_thread.start()
 
 
 def _save_qr_and_url(image_bytes: bytes) -> str:
@@ -954,6 +957,7 @@ async def whatsapp_search_contacts(query: str) -> str:
             if chat_jid not in seen:
                 seen[chat_jid] = {
                     "phone": phone,
+                    "jid": chat_jid,
                     "name": "",
                     "last_message_preview": (text or "")[:60],
                     "last_ts": (ts or "")[:10],

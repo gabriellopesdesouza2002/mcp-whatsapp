@@ -19,7 +19,7 @@ Create `.env` from `.env.example` (`Copy-Item .env.example .env` in PowerShell; 
 docker compose up -d
 ```
 
-The WuzAPI HTTP port is bound to loopback only. Compose pins WuzAPI 1.0.9 and suppresses debug logs to avoid writing authentication tokens to the container log. Do not expose it to the internet.
+The WuzAPI HTTP port is bound to loopback only. Compose pins WuzAPI 1.0.9 and disables container log capture because this release includes user tokens in INFO records. Use the container health status and local `/health` endpoint for diagnostics; do not expose the API to the internet.
 
 ## Install and pair
 
@@ -51,7 +51,7 @@ Restart Claude Code, inspect the connected server's tool list, and confirm it is
 ## Troubleshooting and data handling
 
 - **Server fails to launch:** confirm Python 3.11+, activate the environment, and rerun `python -m pip install -e .`.
-- **Connection refused:** check `docker compose ps`, `docker compose logs wuzapi`, and local port 7143.
+- **Connection refused:** check `docker compose ps`, the local `http://127.0.0.1:7143/health` endpoint, and local port 7143. Container log capture is intentionally disabled to prevent credential leakage.
 - **Unauthorized:** check the configured WuzAPI user token locally; do not expose the admin token.
 - **Empty/stale history:** check pairing and sync status, allow time for backfill, and retry later. This entry cannot force synchronization.
 

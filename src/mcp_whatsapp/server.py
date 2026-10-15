@@ -338,7 +338,7 @@ async def _auto_enable_history() -> None:
                 await client.admin_update_user(
                     user["id"],
                     Events="Message,ReadReceipt,HistorySync",
-                    History=1,
+                    History=1000,
                 )
                 break
     except Exception:
@@ -892,9 +892,8 @@ async def whatsapp_get_user_info(phone: str) -> str:
 
 
 
-@mcp.tool()
-async def whatsapp_search_contacts(query: str) -> str:
-    """Search contacts by name or nickname. Falls back to recent chat history when not found in phone book."""
+async def _search_contacts_raw(query: str) -> dict[str, Any] | str:
+    """Return contact matches before response redaction for internal composition."""
     result = await client.get_contacts()
     contacts_raw = result.get("data", {})
 
@@ -929,7 +928,7 @@ async def whatsapp_search_contacts(query: str) -> str:
                 })
 
     if matches:
-        return _format_result({"success": True, "count": len(matches), "data": matches, "source": "phone_book"})
+        return {"success": True, "count": len(matches), "data": matches, "source": "phone_book"}
 
     # Fallback: extract push names from datajson in local SQLite (no extra API calls)
     if not DB_PATH.exists():
@@ -980,15 +979,15 @@ async def whatsapp_search_contacts(query: str) -> str:
         ]
 
         if name_matches:
-            return json.dumps({
+            return {
                 "found": True,
                 "count": len(name_matches),
                 "data": name_matches,
-            }, ensure_ascii=False)
+            }
 
         # Still not found — return list with names so user can identify
         displayable = [e for e in seen.values() if e["name"] or e["phone"].split("@")[0].isdigit()][:30]
-        return json.dumps({
+        return {
             "found": False,
             "contacts_endpoint": contacts_status,
             "message": (
@@ -998,21 +997,28 @@ async def whatsapp_search_contacts(query: str) -> str:
                 f"'Não encontrei '{query}' em nenhuma conversa ou contato. Você sabe o número de telefone dele(a)?'"
             ),
             "recent_chats": displayable,
-        }, ensure_ascii=False)
+        }
     except Exception as e:
         return f"❌ '{query}' not found in contacts. History fallback failed: {e}"
+
+
+@mcp.tool()
+async def whatsapp_search_contacts(query: str) -> str:
+    """Search contacts by name or nickname. Falls back to recent chat history when not found in phone book."""
+    result = await _search_contacts_raw(query)
+    return _format_result(result) if isinstance(result, dict) else PrivacyGuard.redact(result)
 
 
 @mcp.tool()
 async def whatsapp_get_messages_by_contact_name(name: str, only_today: bool = True, limit: int = 20) -> str:
     """Get messages from a contact by name/nickname. only_today: filter today only. limit: default 20."""
     # 1. Find the contact first
-    search_result = await whatsapp_search_contacts(name)
-    if "❌" in search_result:
-        return search_result # Contact not found message
+    search_result = await _search_contacts_raw(name)
+    if isinstance(search_result, str):
+        return PrivacyGuard.redact(search_result)
     
     try:
-        data = json.loads(search_result)
+        data = search_result
         contacts = data.get("data", [])
         if not contacts:
             return f"❌ Nenhum contato encontrado com o nome '{name}'."
@@ -1155,7 +1161,7 @@ async def whatsapp_admin(action: str, name: str = "", token: str = "", confirmed
                     await client.admin_update_user(
                         user["id"],
                         Events="Message,ReadReceipt,HistorySync",
-                        History=1,
+                        History=1000,
                     )
                     return f"✅ Histórico ativado para '{user.get('name')}'! Use whatsapp_get_messages para ler."
             return "❌ Usuário com esse token não encontrado."
@@ -1200,7 +1206,7 @@ async def whatsapp_configure(token: str, base_url: str = "http://localhost:7143"
                         await client.admin_update_user(
                             user["id"],
                             events="Message,ReadReceipt,HistorySync",
-                            history=True,
+                            history=1000,
                         )
                     history_status = "\n  📥 Message history: enabled"
                     break

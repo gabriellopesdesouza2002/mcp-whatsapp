@@ -422,6 +422,12 @@ class WuzAPIClient:
             user_list = users.get("data") or []
             for user in user_list:
                 if user.get("token") == self.token:
+                    if self.history_sync and user.get("id"):
+                        await self.admin_update_user(
+                            user["id"],
+                            history=1000,
+                            events="Message,ReadReceipt,HistorySync",
+                        )
                     return True
             
             # Not found, create it with a generic name
@@ -435,7 +441,7 @@ class WuzAPIClient:
                 if user_id:
                     await self.admin_update_user(
                         user_id, 
-                        history=True, 
+                        history=1000,
                         events="Message,ReadReceipt,HistorySync"
                     )
             

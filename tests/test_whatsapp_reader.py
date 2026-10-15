@@ -10,6 +10,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from mcp_whatsapp import reader_server as reader
 from mcp_whatsapp import server as core
+from mcp_whatsapp.wuzapi_client import WuzAPIClient
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_TOOLS = {
@@ -92,8 +93,24 @@ def test_contact_name_fallback_preserves_jid_and_can_query(monkeypatch):
         return {"data": contacts}
 
     monkeypatch.setattr(core.client, "get_contacts", get_contacts)
+    monkeypatch.setattr(core, "WUZAPI_PRIVACY_MODE", False)
     match = json.loads(asyncio.run(core.whatsapp_search_contacts("Test Contact")))
     assert match["data"][0]["jid"] == "1234567890@s.whatsapp.net"
+
+
+def test_contact_name_message_lookup_keeps_raw_jid_under_privacy_mode(monkeypatch):
+    monkeypatch.setattr(core, "WUZAPI_PRIVACY_MODE", True)
+    async def contacts():
+        return {"data": {"1234567890@s.whatsapp.net": {"PushName": "Test Contact"}}}
+
+    async def query(sql, params=(), limit=50):
+        assert params[0] == "1234567890@s.whatsapp.net"
+        return []
+
+    monkeypatch.setattr(core.client, "get_contacts", contacts)
+    monkeypatch.setattr(core, "_query_db", query)
+    result = asyncio.run(core.whatsapp_get_messages_by_contact_name("Test Contact", False, 10))
+    assert "Nenhuma mensagem" in result
 
 
 def test_skill_frontmatter_and_package_validation(tmp_path, monkeypatch):
@@ -130,6 +147,7 @@ def test_search_contacts_fallback_and_name_message_query(monkeypatch, tmp_path):
     db_path = tmp_path / "present-test-db.db"
     db_path.touch()
     monkeypatch.setattr(core, "DB_PATH", db_path)
+    monkeypatch.setattr(core, "WUZAPI_PRIVACY_MODE", False)
     async def no_contacts():
         return {"data": {}}
 
@@ -173,6 +191,23 @@ def test_message_history_queries_with_simulated_rows(monkeypatch, tmp_path):
     assert "Discussed the project estimate" in searched
     empty = awaitable_result(core.whatsapp_search_messages("not-present", 10))
     assert "No messages found" in empty
+
+
+def test_wuzapi_history_settings_use_integer_retention():
+    client = WuzAPIClient("http://127.0.0.1:7143", "unit-test-token", "admin-test-token")
+    updates = []
+
+    async def users():
+        return {"data": [{"id": "user-id", "token": "unit-test-token", "history": 0, "events": ""}]}
+
+    async def update(user_id, **fields):
+        updates.append((user_id, fields))
+        return {"success": True}
+
+    client.admin_list_users = users
+    client.admin_update_user = update
+    assert asyncio.run(client.ensure_user_exists()) is True
+    assert updates == [("user-id", {"history": 1000, "events": "Message,ReadReceipt,HistorySync"})]
 
 
 def awaitable_result(awaitable):

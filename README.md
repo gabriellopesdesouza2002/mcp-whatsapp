@@ -31,7 +31,7 @@ Just talk to your AI naturally:
 
 Once configured, supported actions can be requested through an MCP-compatible assistant. Some actions modify WhatsApp data or send messages, so review permissions and requests carefully.
 
-**Important:** This project integrates with **WuzAPI, an unofficial WhatsApp Web interface**. It is not the official WhatsApp Business Platform or a Meta-approved integration. Account restrictions and compatibility changes are possible. See [Security & Responsible Use](#️-security--responsible-use).
+**Important:** This project integrates with **WuzAPI, an unofficial WhatsApp Web interface**. It is not the official WhatsApp Business Platform or a Meta-approved integration. Account restrictions and compatibility changes are possible. See the **Security & Responsible Use** section below.
 
 ---
 
@@ -198,7 +198,7 @@ Add to your editor's MCP config file:
 
 ```
 You: "Check my local WhatsApp configuration"
-Claude: ✅ Configuration saved! Now use whatsapp_connect() to connect.
+Claude: [reports configured connection settings or requests a local setup step]
 
 You: "Connect my WhatsApp"
 Claude: [generates QR Code — scan with your phone]

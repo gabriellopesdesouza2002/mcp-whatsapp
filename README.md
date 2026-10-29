@@ -2,16 +2,16 @@
 
 # 📱 MCP WhatsApp
 
-**Send messages, images, documents and more on WhatsApp — directly from any AI.**
+**An open-source MCP server for connecting compatible AI assistants to WhatsApp through WuzAPI.**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-Compatible-blueviolet)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/gabriellopesdesouza2002/mcp-whatsapp?style=social)](https://github.com/gabriellopesdesouza2002/mcp-whatsapp)
 
-Works with **Claude**, **Gemini**, **Cursor**, **Windsurf**, **Continue.dev** and any MCP-compatible AI.
+Designed for **MCP-compatible clients**, including Claude Code and compatible editor integrations. Client support depends on the MCP capabilities and configuration available in each application.
 
-**100% Open Source and MIT Licensed.**
+**Public MCP server source available under the MIT License.**
 
 </div>
 
@@ -29,7 +29,9 @@ Just talk to your AI naturally:
 > 
 > *"Create a group called 'Team Sprint' with these numbers"*
 
-**No code. No manual API calls. Just ask.**
+Once configured, supported actions can be requested through an MCP-compatible assistant. Some actions modify WhatsApp data or send messages, so review permissions and requests carefully.
+
+**Important:** This project integrates with **WuzAPI, an unofficial WhatsApp Web interface**. It is not the official WhatsApp Business Platform or a Meta-approved integration. Account restrictions and compatibility changes are possible. See [Security & Responsible Use](#️-security--responsible-use).
 
 ---
 
@@ -57,11 +59,11 @@ git clone https://github.com/gabriellopesdesouza2002/mcp-whatsapp.git
 cd mcp-whatsapp
 # PowerShell: Copy-Item .env.example .env
 # macOS/Linux: cp .env.example .env
-# Edit .env and set unique random WUZAPI_ADMIN_TOKEN and WUZAPI_TOKEN values
+# Edit .env and configure separate random tokens plus persistent encryption/HMAC keys
 docker compose up -d
 ```
 
-WuzAPI listens on `127.0.0.1:7143` with message history enabled. The compose file requires a configured admin token and has no insecure default.
+WuzAPI is bound to `127.0.0.1:7143` by the included Compose configuration. Before starting it, set `WUZAPI_ADMIN_TOKEN`, `WUZAPI_TOKEN`, `WUZAPI_GLOBAL_ENCRYPTION_KEY` and `WUZAPI_GLOBAL_HMAC_KEY` in your local `.env` file, as documented in [the Reader installation guide](docs/reader-install.md). Keep the encryption/HMAC keys persistent across restarts.
 
 > Keep `.env` private. Never expose the WuzAPI port publicly or commit tokens.
 
@@ -91,9 +93,9 @@ claude mcp add whatsapp -s user -- /path/to/mcp-whatsapp/.venv/bin/python -m mcp
 
 Restart Claude, then just ask:
 
-> *"Configure my WhatsApp with token **mytoken123**"*
+> Configure the local WhatsApp integration using the credentials already stored in my private configuration.
 
-**Magic:** The server will automatically create the user in WuzAPI for you (Plug & Play). No manual dashboard work required! 🪄
+The full MCP includes setup tools, but pairing and authorization still require care. Avoid putting live tokens into chat messages.
 
 ---
 
@@ -105,7 +107,7 @@ If you prefer to use the dashboard, it is available at `http://localhost:7143`.
 2. Enter the `WUZAPI_ADMIN_TOKEN` value from your private `.env`
 3. Go to **Users → Create User**, enter any name and choose a token.
 
-> *"Configure my WhatsApp with token **myusertoken**"*
+> Keep configuration and token values in your private local environment, not in shared chats or screenshots.
 
 > 💡 **Two tokens, two purposes:**
 > - **User token** → sends/receives messages — this is what you use daily
@@ -123,7 +125,7 @@ claude mcp add whatsapp -s user -- \
 ```
 
 Then ask Claude to configure:
-> *"Configure my WhatsApp: token=abc123, url=http://localhost:7143"*
+> Configure my locally hosted WhatsApp connection (using local credentials).
 
 ### Claude Desktop
 
@@ -195,7 +197,7 @@ Add to your editor's MCP config file:
 ### First-time setup
 
 ```
-You: "Configure my WhatsApp with token abc123"
+You: "Check my local WhatsApp configuration"
 Claude: ✅ Configuration saved! Now use whatsapp_connect() to connect.
 
 You: "Connect my WhatsApp"
@@ -253,16 +255,14 @@ mcp-whatsapp/
 
 ## 🛡️ Security & Responsible Use
 
-**IMPORTANT: This project uses an unofficial WhatsApp API. Use it at your own risk.**
+**Unofficial integration:** This project connects to WuzAPI, not to Meta's official WhatsApp Business Platform. It is not endorsed by Meta. Using an unofficial interface may lead to instability, restrictions, or account loss. Consider the official platform for business-critical integrations.
 
-To ensure your account stays safe and you remain compliant with global data laws (LGPD/GDPR), please follow these guidelines:
-
-1.  **Avoid Spam:** Do not use this tool for bulk messaging or automated marketing. Excessive automated activity is the #1 cause of WhatsApp account bans.
-2.  **Privacy Guardrails:** By default, this server includes masking for sensitive information (PII) like CPFs, Credit Cards, and Emails (when `WUZAPI_PRIVACY_MODE=true`).
-3.  **Audit Logs:** All tool calls are logged in `logs/audit_privacy.log`. This is essential for transparency and accountability.
-4.  **Token Safety:** Never share your `WUZAPI_TOKEN` or `WUZAPI_ADMIN_TOKEN`. These grant full access to your messages.
-5.  **AI Autonomy:** Be careful when giving the AI "autonomy" to send messages. Always review the output if the AI is performing high-stakes tasks.
-6.  **Terms of Service:** Be aware that using unofficial APIs violates WhatsApp's Terms of Service. This tool is intended for personal productivity and research.
+- **Consent and appropriate use:** Avoid unsolicited bulk messaging and automated outreach. Respect applicable platform rules and obtain consent where required.
+- **Privacy mode:** The full MCP supports regex-based masking of common identifiers when `WUZAPI_PRIVACY_MODE=true`; its runtime fallback is `false` when the variable is unset. Masking is limited and does **not** guarantee anonymization or legal compliance. The Reader applies additional masking to its text responses.
+- **Audit behavior:** The full MCP configures local logging at `logs/audit_privacy.log`; the Reader entry does not enable that logger by default. Logging and masking do not automatically satisfy LGPD/GDPR obligations.
+- **Protect credentials:** Keep the WuzAPI admin and user tokens, encryption keys, and local `.env` private. Do not paste real tokens into AI prompts or commit them to Git.
+- **Limit agent permissions:** Use the separate [read-only Reader](docs/reader-install.md) for history queries when sending or administrative features are unnecessary. Its tools are read-only, but the underlying WuzAPI user token itself is not inherently read-only.
+- **Review sensitive operations:** Confirm recipients and content before letting an agent send messages, share files, administer groups, or change sessions. Data sent to an AI provider is governed by that provider's processing terms.
 
 ---
 
